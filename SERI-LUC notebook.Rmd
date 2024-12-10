@@ -9,8 +9,7 @@ Load Packages
 library(sf)
 library(tidyverse)
 library(ggplot2)
-library(jsonlite)
-library(httr)
+library(Cairo)
 library(nomisr)
 ```
 
@@ -36,7 +35,7 @@ bres_sec_emp <- nomis_get_data(
 
 ```
 
-
+Summing by industry and merging with MSOA boundaries
 ```{r}
 # Summing OBS_VALUE for each unique GEOGRAPHY
 summed_df <- bres_sector_employment %>%
@@ -67,21 +66,27 @@ filtered_final_df <- final_df %>%
 merged_data <- left_join(filtered_boundary, filtered_final_df, by = c("MSOA11CD" = "GEOGRAPHY_CODE"))
 
 ```
+Summary Stats
+```{r}
 
+summary(merged_data$AGRI_PERCENTAGE)
+
+# Create a histogram for AGRI_PERCENTAGE
+ggplot(data = merged_data, aes(x = AGRI_PERCENTAGE)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Histogram of Agriculture Percentage",
+    x = "Agriculture Percentage",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+Map plots for percentage and total agri employment
 ```{r}
 # Map agriculture proportion of total employment
 ggplot(data = merged_data) +
-  geom_sf(aes(fill = AGRI_PERCENTAGE)) +  # Color areas by AGRI_PERCENTAGE
-  scale_fill_viridis_c(option = "plasma", name = "Agriculture %") +  # Color scale for percentage
-  theme_minimal() +
-  labs(title = "Agricultural Percentage by MSOA",
-       subtitle = "Agricultural employment as a percentage of total employment by MSOA in England")
-
-
-
-ggplot(data = merged_data) +
-  geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.05) + 
-  # Boundary lines are black, areas with 0 are set to NA
+  geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.001) + 
+  # Boundary lines are grey, areas with 0 are set to NA
   scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture %") +  
   # White for areas with 0 values
   theme_minimal() +
@@ -90,6 +95,28 @@ ggplot(data = merged_data) +
   theme(legend.position = "right", 
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank())
+
+# Save the plot
+ggsave("agri_percentage_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
+
+# Save the plot
+#CairoPNG(filename = "agri_percentage_MSOA.png", width = 2000, height = 2000, pointsize = 50, bg = "white")
+
+# Map agriculture employment
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = ifelse(SUM_OBS_AGRI == 0, NA, SUM_OBS_AGRI)), color = "grey", size = 0.001) + 
+  # Boundary lines are grey, areas with 0 are set to NA
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture Employment Count") +  
+  # White for areas with 0 values
+  theme_minimal() +
+  labs(title = "Agricultural Employment by MSOA",
+       subtitle = "Agricultural employment by MSOA in England") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+# Save the plot
+ggsave("agri_total_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
 
 
 ```
