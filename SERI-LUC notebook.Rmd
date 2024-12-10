@@ -1,0 +1,96 @@
+---
+title: "SERI-LUC notebook"
+output: html_document
+date: "2024-12-10"
+---
+
+Load Packages
+```{r}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(jsonlite)
+library(httr)
+library(nomisr)
+```
+
+Load Data
+```{r}
+#Load 2021 MSOA boundary file
+MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp")
+
+#Load 2011 MSOA boundary file
+MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg")
+
+#Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry in each 2011 MSOA
+bres_sec_emp <- nomis_get_data(
+  id = "NM_189_1",
+  geography = "TYPE297",
+  date = "latest",
+  industry = "TYPE33",
+  employment_status = 1,
+  measure = 1,
+  measures = 20100
+)
+
+
+```
+
+
+```{r}
+# Summing OBS_VALUE for each unique GEOGRAPHY
+summed_df <- bres_sector_employment %>%
+  group_by(GEOGRAPHY, GEOGRAPHY_CODE) %>%
+  summarise(SUM_OBS_TOTAL = sum(as.numeric(OBS_VALUE), na.rm = TRUE), .groups = 'drop')
+
+# Summing OBS_VALUE for all 4-digit INDUSTRY_CODE that start with "01" and are therefore in agri-industries for each unique GEOGRAPHY
+summed_industry_df <- bres_sector_employment %>%
+  filter(substr(INDUSTRY_CODE, 1, 2) == "01") %>%
+  group_by(GEOGRAPHY) %>%
+  summarise(SUM_OBS_AGRI = sum(as.numeric(OBS_VALUE), na.rm = TRUE))
+
+# Merge the two dataframes to combine the results
+final_df <- left_join(summed_df, summed_industry_df, by = "GEOGRAPHY")
+
+# Calculate the percentage of SUM_OBS_AGRI in SUM_OBS_TOTAL for each GEOGRAPHY
+final_df <- final_df %>%
+  mutate(AGRI_PERCENTAGE = (SUM_OBS_AGRI / SUM_OBS_TOTAL) * 100)
+
+# Filter the MSOA boundary and final_df data to include only entries for England
+filtered_boundary <- MSOA_11_boundary %>%
+  filter(substr(MSOA11CD, 1, 1) == "E")
+
+filtered_final_df <- final_df %>%
+  filter(substr(GEOGRAPHY_CODE, 1, 1) == "E")
+
+# Merge the employment sums data with the MSOA boundary file
+merged_data <- left_join(filtered_boundary, filtered_final_df, by = c("MSOA11CD" = "GEOGRAPHY_CODE"))
+
+```
+
+```{r}
+# Map agriculture proportion of total employment
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = AGRI_PERCENTAGE)) +  # Color areas by AGRI_PERCENTAGE
+  scale_fill_viridis_c(option = "plasma", name = "Agriculture %") +  # Color scale for percentage
+  theme_minimal() +
+  labs(title = "Agricultural Percentage by MSOA",
+       subtitle = "Agricultural employment as a percentage of total employment by MSOA in England")
+
+
+
+ggplot(data = merged_data) +
+  geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.05) + 
+  # Boundary lines are black, areas with 0 are set to NA
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture %") +  
+  # White for areas with 0 values
+  theme_minimal() +
+  labs(title = "Agricultural Percentage by MSOA",
+       subtitle = "Agricultural employment as a percentage of total employment by MSOA in England") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+
+```
+
