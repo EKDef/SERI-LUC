@@ -21,7 +21,7 @@ MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geograp
 #Load 2011 MSOA boundary file
 MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg")
 
-#Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry in each 2011 MSOA
+#Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry working in each 2011 MSOA
 bres_sec_emp <- nomis_get_data(
   id = "NM_189_1",
   geography = "TYPE297",
@@ -32,18 +32,26 @@ bres_sec_emp <- nomis_get_data(
   measures = 20100
 )
 
+#Load Census 2021 data on the number of 
+census_sec_emp <- nomis_get_data(
+  id = "NM_2081_1",
+  geography = "TYPE152",
+  c2021_occ_105 = "0...104",
+  measures = 20100
+)
 
 ```
+##### BRES based analysis #####
 
 Summing by industry and merging with MSOA boundaries
 ```{r}
 # Summing OBS_VALUE for each unique GEOGRAPHY
-summed_df <- bres_sector_employment %>%
+summed_df <- bres_sec_emp %>%
   group_by(GEOGRAPHY, GEOGRAPHY_CODE) %>%
   summarise(SUM_OBS_TOTAL = sum(as.numeric(OBS_VALUE), na.rm = TRUE), .groups = 'drop')
 
 # Summing OBS_VALUE for all 4-digit INDUSTRY_CODE that start with "01" and are therefore in agri-industries for each unique GEOGRAPHY
-summed_industry_df <- bres_sector_employment %>%
+summed_industry_df <- bres_sec_emp %>%
   filter(substr(INDUSTRY_CODE, 1, 2) == "01") %>%
   group_by(GEOGRAPHY) %>%
   summarise(SUM_OBS_AGRI = sum(as.numeric(OBS_VALUE), na.rm = TRUE))
@@ -71,6 +79,12 @@ Summary Stats
 
 summary(merged_data$AGRI_PERCENTAGE)
 
+summary(merged_data$SUM_OBS_TOTAL)
+
+total_sum_obs <- merged_data %>%
+  st_drop_geometry() %>%  # Drop geometry to simplify the operation
+  summarise(Total_SUM_OBS_TOTAL = sum(SUM_OBS_TOTAL, na.rm = TRUE))
+
 # Create a histogram for AGRI_PERCENTAGE
 ggplot(data = merged_data, aes(x = AGRI_PERCENTAGE)) +
   geom_histogram(binwidth = 1, fill = "steelblue", color = "black", alpha = 0.7) +
@@ -80,9 +94,69 @@ ggplot(data = merged_data, aes(x = AGRI_PERCENTAGE)) +
     y = "Frequency"
   ) +
   theme_minimal()
+
+
+# Process and bin AGRI_PERCENTAGE, dropping geometry and unnecessary columns
+bin_counts <- merged_data %>%
+  st_drop_geometry() %>%  # Remove geometry column
+  mutate(
+    AGRI_PERCENTAGE_BIN = case_when(
+      AGRI_PERCENTAGE == 0 ~ "0",  # Bin for exactly 0 values
+      AGRI_PERCENTAGE > 0 & AGRI_PERCENTAGE <= 0.5 ~ "Near Zero (0 to 0.5)",  # Bin for near-zero values
+      TRUE ~ cut(AGRI_PERCENTAGE, breaks = seq(0.5, 100, by = 0.5), include.lowest = TRUE, right = FALSE)  # Other bins
+    )
+  ) %>%
+  count(AGRI_PERCENTAGE_BIN, name = "Count") %>%  # Count occurrences in each bin
+  arrange(AGRI_PERCENTAGE_BIN)  # Sort bins
+
+# Print the resulting table
+print(bin_counts)
+
+# Filter for rows where GEOGRAPHY_NAME is "Hillingdon 016"
+selected_data <- bres_sec_emp %>%
+  filter(GEOGRAPHY_NAME == "Hillingdon 016")
+
+# View the data
+print(selected_data) 
+
 ```
 Map plots for percentage and total agri employment
 ```{r}
+
+##### Total employment plot #####
+# Calculate the threshold for the upper 5% of SUM_OBS_TOTAL
+threshold <- quantile(merged_data$SUM_OBS_TOTAL, 0.95, na.rm = TRUE)
+
+# Add a new column to classify regions as top 5% or not
+merged_data <- merged_data %>%
+  mutate(SUM_OBS_CATEGORY = ifelse(SUM_OBS_TOTAL >= threshold, "Top 5%", "Other"))
+
+# Plot the data 5% excluded total employment data
+ggplot(data = merged_data) +  
+  geom_sf(data = merged_data %>% filter(SUM_OBS_CATEGORY == "Other"), # Separate the fill aesthetic for the two categories
+          aes(fill = ifelse(SUM_OBS_TOTAL == 0, NA, SUM_OBS_TOTAL)), color = "grey", size = 0.1) +
+  geom_sf(data = merged_data %>% filter(SUM_OBS_CATEGORY == "Top 5%"), 
+          fill = "red", color = "grey", size = 0.1) +
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Employment Count") +  # Continuous fill scale for values excluding top 5%
+  theme_minimal() +
+  labs(title = "Total Employment by MSOA",
+       subtitle = "Top 5% areas highlighted in red") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),    # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),  # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("employ_5pct_total_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
+
+##### Agriculture proportion employment #####
 # Map agriculture proportion of total employment
 ggplot(data = merged_data) +
   geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.001) + 
@@ -99,9 +173,7 @@ ggplot(data = merged_data) +
 # Save the plot
 ggsave("agri_percentage_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
 
-# Save the plot
-#CairoPNG(filename = "agri_percentage_MSOA.png", width = 2000, height = 2000, pointsize = 50, bg = "white")
-
+##### Agriculture total employment #####
 # Map agriculture employment
 ggplot(data = merged_data) +
   geom_sf(aes(fill = ifelse(SUM_OBS_AGRI == 0, NA, SUM_OBS_AGRI)), color = "grey", size = 0.001) + 
@@ -118,6 +190,91 @@ ggplot(data = merged_data) +
 # Save the plot
 ggsave("agri_total_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
 
+# Calculate the threshold for the upper 0.1% of SUM_OBS_TOTAL
+threshold <- quantile(merged_data$SUM_OBS_AGRI, 0.999, na.rm = TRUE)
+
+# Add a new column to classify regions as top 0.1% or not
+merged_data <- merged_data %>%
+  mutate(SUM_OBS_CATEGORY = ifelse(SUM_OBS_AGRI >= threshold, "Top 0.1%", "Other"))
+
+# Plot the data 0.5% excluded total employment data
+ggplot(data = merged_data) +  
+  geom_sf(data = merged_data %>% filter(SUM_OBS_CATEGORY == "Other"), # Separate the fill aesthetic for the two categories
+          aes(fill = ifelse(SUM_OBS_AGRI == 0, NA, SUM_OBS_AGRI)), color = "grey", size = 0.1) +
+  geom_sf(data = merged_data %>% filter(SUM_OBS_CATEGORY == "Top 0.1%"), 
+          fill = "red", color = "grey", size = 0.1) +
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agri employment Count") +  # Continuous fill scale for values excluding top 5%
+  theme_minimal() +
+  labs(title = "Agri employment by MSOA",
+       subtitle = "Top 0.1% areas highlighted in red") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),    # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),  # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("agri_01pct_total_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
+
+
+```
+
+##### Census based analysis #####
+
+```{r}
+# Filter and summarize census data for the required categories
+filtered_data <- census_sec_emp %>%
+  filter(C2021_OCC_105 %in% c(0, 60)) %>%   # Retain rows where C2021_OCC_105 is 0 or 60
+  mutate(Category = case_when(
+    C2021_OCC_105 == 0 ~ "SUM_OBS_TOTAL",  # Rename categories
+    C2021_OCC_105 == 60 ~ "SUM_OBS_AGRI"
+  )) %>%
+  group_by(GEOGRAPHY_CODE, Category) %>%    # Group by geography and category
+  summarise(SUM_OBS_VALUE = sum(OBS_VALUE, na.rm = TRUE), .groups = "drop") %>% 
+  pivot_wider(names_from = Category, values_from = SUM_OBS_VALUE, values_fill = 0)  # Reshape to wide format
+
+# Merge the summarized census data with the shapefile
+census_merged_data <- MSOA_21_boundary %>%
+  filter(str_starts(MSOA21CD, "E")) %>%  # Filter MSOA21CD to include only those starting with "E"
+  left_join(filtered_data, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  mutate(
+    AGRI_PERCENTAGE = ifelse(SUM_OBS_TOTAL > 0, SUM_OBS_AGRI / SUM_OBS_TOTAL * 100, NA)  # Calculate percentage
+  )
+
+```
+
+```{r}
+
+##### Agriculture proportion employment #####
+# Map agriculture proportion of total employment
+ggplot(data = census_merged_data) +
+  geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.001) + 
+  # Boundary lines are grey, areas with 0 are set to NA
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture %") +  
+  # White for areas with 0 values
+  theme_minimal() +
+  labs(title = "Agricultural and Related Trades by MSOA",
+       subtitle = "Agricultural and Related Trades as a percentage of total employment using Census 2021 data") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),    # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),  # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("agri_percentage_census.png", device = "png", width = 45, height = 45, dpi = 200)
 
 ```
 
