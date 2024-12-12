@@ -5,7 +5,7 @@ date: "2024-12-10"
 ---
 
 Load Packages
-```{r}
+```{r Load packages, include=FALSE}
 library(sf)
 library(tidyverse)
 library(ggplot2)
@@ -14,7 +14,7 @@ library(nomisr)
 ```
 
 Load Data
-```{r}
+```{r Load data, include=FALSE}
 #Load 2021 MSOA boundary file
 MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp")
 
@@ -112,13 +112,6 @@ bin_counts <- merged_data %>%
 # Print the resulting table
 print(bin_counts)
 
-# Filter for rows where GEOGRAPHY_NAME is "Hillingdon 016"
-selected_data <- bres_sec_emp %>%
-  filter(GEOGRAPHY_NAME == "Hillingdon 016")
-
-# View the data
-print(selected_data) 
-
 ```
 Map plots for percentage and total agri employment
 ```{r}
@@ -144,8 +137,8 @@ ggplot(data = merged_data) +
   theme(legend.position = "right", 
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
-        plot.title = element_text(size = 48, hjust = 0.5),    # Adjust title size
-        plot.subtitle = element_text(size = 44, hjust = 0.5),  # Adjust subtitle size
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
         legend.title = element_text(size = 32),                 # Adjust legend title size
         legend.text = element_text(size = 30),                  # Adjust legend text size
         axis.text = element_text(size = 30),                    # Adjust axis text size
@@ -164,14 +157,22 @@ ggplot(data = merged_data) +
   scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture %") +  
   # White for areas with 0 values
   theme_minimal() +
-  labs(title = "Agricultural Percentage by MSOA",
-       subtitle = "Agricultural employment as a percentage of total employment by MSOA in England") +
+  labs(title = "Agricultural related employment percentage by 2011 MSOA",
+       subtitle = "Agricultural (SIC 2007 01**) employment as a percentage of total employment using BRES data") +
   theme(legend.position = "right", 
         panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank())
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+        )
 
 # Save the plot
-ggsave("agri_percentage_MSOA.png", device = "png", width = 45, height = 45, dpi = 200)
+ggsave("agri_percentage_BRES.png", device = "png", width = 45, height = 45, dpi = 200)
 
 ##### Agriculture total employment #####
 # Map agriculture employment
@@ -210,8 +211,8 @@ ggplot(data = merged_data) +
   theme(legend.position = "right", 
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
-        plot.title = element_text(size = 48, hjust = 0.5),    # Adjust title size
-        plot.subtitle = element_text(size = 44, hjust = 0.5),  # Adjust subtitle size
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
         legend.title = element_text(size = 32),                 # Adjust legend title size
         legend.text = element_text(size = 30),                  # Adjust legend text size
         axis.text = element_text(size = 30),                    # Adjust axis text size
@@ -229,7 +230,7 @@ ggsave("agri_01pct_total_MSOA.png", device = "png", width = 45, height = 45, dpi
 
 ```{r}
 # Filter and summarize census data for the required categories
-filtered_data <- census_sec_emp %>%
+filtered_census_data <- census_sec_emp %>%
   filter(C2021_OCC_105 %in% c(0, 60)) %>%   # Retain rows where C2021_OCC_105 is 0 or 60
   mutate(Category = case_when(
     C2021_OCC_105 == 0 ~ "SUM_OBS_TOTAL",  # Rename categories
@@ -239,10 +240,10 @@ filtered_data <- census_sec_emp %>%
   summarise(SUM_OBS_VALUE = sum(OBS_VALUE, na.rm = TRUE), .groups = "drop") %>% 
   pivot_wider(names_from = Category, values_from = SUM_OBS_VALUE, values_fill = 0)  # Reshape to wide format
 
-# Merge the summarized census data with the shapefile
+# Merge the summarised census data with the shapefile
 census_merged_data <- MSOA_21_boundary %>%
   filter(str_starts(MSOA21CD, "E")) %>%  # Filter MSOA21CD to include only those starting with "E"
-  left_join(filtered_data, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  left_join(filtered_census_data, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
   mutate(
     AGRI_PERCENTAGE = ifelse(SUM_OBS_TOTAL > 0, SUM_OBS_AGRI / SUM_OBS_TOTAL * 100, NA)  # Calculate percentage
   )
@@ -259,13 +260,13 @@ ggplot(data = census_merged_data) +
   scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture %") +  
   # White for areas with 0 values
   theme_minimal() +
-  labs(title = "Agricultural and Related Trades by MSOA",
+  labs(title = "Agricultural and Related Trades by 2021 MSOA",
        subtitle = "Agricultural and Related Trades as a percentage of total employment using Census 2021 data") +
   theme(legend.position = "right", 
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
-        plot.title = element_text(size = 48, hjust = 0.5),    # Adjust title size
-        plot.subtitle = element_text(size = 44, hjust = 0.5),  # Adjust subtitle size
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
         legend.title = element_text(size = 32),                 # Adjust legend title size
         legend.text = element_text(size = 30),                  # Adjust legend text size
         axis.text = element_text(size = 30),                    # Adjust axis text size
@@ -278,3 +279,134 @@ ggsave("agri_percentage_census.png", device = "png", width = 45, height = 45, dp
 
 ```
 
+```{r}
+
+# Process the census data
+processed_data <- census_sec_emp %>%
+  filter(str_starts(GEOGRAPHY_CODE, "E")) %>%  # Filter for GEOGRAPHY_CODE starting with "E"
+  group_by(GEOGRAPHY_CODE) %>%  # Group by each unique GEOGRAPHY_CODE
+  mutate(
+    # Get the OBS_VALUE where C2021_OCC_105 is 0 for each GEOGRAPHY_CODE
+    Total_OBS_VALUE = OBS_VALUE[C2021_OCC_105 == 0],
+    # Divide each OBS_VALUE by the Total_OBS_VALUE
+    PERC_OBS_VALUE = ifelse(!is.na(Total_OBS_VALUE) & Total_OBS_VALUE > 0, OBS_VALUE / Total_OBS_VALUE, NA)
+  ) %>%
+  ungroup()  # Ungroup after processing
+
+# Extract the top 3 values for each GEOGRAPHY_CODE, excluding rows where C2021_OCC_105 == 0
+top_3_values <- processed_data %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  filter(!is.na(PERC_OBS_VALUE) & C2021_OCC_105 != 0) %>%  # Exclude the overall total
+  arrange(desc(PERC_OBS_VALUE)) %>%
+  slice_max(order_by = PERC_OBS_VALUE, n = 3, with_ties = FALSE) %>%
+  mutate(Rank = row_number()) %>%
+  ungroup()
+
+# Reshape the data to wide format, creating separate columns for the top 3 values and their names
+top_3_wide <- top_3_values %>%
+  select(GEOGRAPHY_CODE, Rank, PERC_OBS_VALUE, C2021_OCC_105_NAME) %>%
+  pivot_wider(
+    names_from = Rank,
+    values_from = c(PERC_OBS_VALUE, C2021_OCC_105_NAME),
+    names_prefix = "Top_"
+  )
+
+# Merge the result with MSOA_21_boundary
+top_prop_employ <- MSOA_21_boundary %>%
+  inner_join(top_3_wide, by = c("MSOA21CD" = "GEOGRAPHY_CODE"))
+
+summary(top_prop_employ$PERC_OBS_VALUE_Top_1)
+
+# Count appearances of unique values in C2021_OCC_105_NAME_Top_1
+top_1_employ_counts <- top_prop_employ %>%
+  st_drop_geometry() %>%  # Drop the geometry column
+  count(C2021_OCC_105_NAME_Top_1, name = "Count") %>%
+  arrange(desc(Count))
+
+# View the sorted table
+print(top_1_employ_counts)
+
+# Count appearances of unique values in C2021_OCC_105_NAME_Top_2
+top_2_employ_counts <- top_prop_employ %>%
+  st_drop_geometry() %>%  # Drop the geometry column
+  count(C2021_OCC_105_NAME_Top_2, name = "Count") %>%
+  arrange(desc(Count))
+
+# View the sorted table
+print(top_2_employ_counts)
+
+# Count appearances of unique values in C2021_OCC_105_NAME_Top_3
+top_3_employ_counts <- top_prop_employ %>%
+  st_drop_geometry() %>%  # Drop the geometry column
+  count(C2021_OCC_105_NAME_Top_3, name = "Count") %>%
+  arrange(desc(Count))
+
+# View the sorted table
+print(top_3_employ_counts)
+
+```
+
+```{r}
+# Merge top_3_values with MSOA_21_boundary to include geometry
+top_3_with_geometry <- top_3_values %>%
+  inner_join(MSOA_21_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD"))
+
+# Filter for C2021_OCC_105_CODE == "_60"
+filtered_top_3 <- top_3_with_geometry %>%
+  filter(C2021_OCC_105_CODE == "_60")  # Keep rows where code is _60
+
+# Plot the filtered data
+ggplot(data = filtered_top_3) +
+  geom_sf(aes(geometry = geometry, color = factor(Rank)), size = 0.5) +  # Use different colors for Rank
+  scale_color_manual(
+    values = c("red", "blue", "green"),  # Assign colors to Rank 1, 2, and 3
+    name = "Rank",
+    labels = c("Rank 1", "Rank 2", "Rank 3")  # Legend labels
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Top 3 Ranks for C2021_OCC_105_CODE == _60",
+    subtitle = "Ranks displayed in different colors",
+    color = "Rank"
+  ) +
+  theme(
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# Filter MSOA_21_boundary for values where MSOA21CD starts with "E"
+eng_MSOA_21_boundary <- MSOA_21_boundary %>%
+  filter(startsWith(MSOA21CD, "E"))
+
+# Plot the filtered data with boundaries underneath
+ggplot() +
+  # Add grey boundaries from MSOA_21_boundary
+  geom_sf(data = eng_MSOA_21_boundary, fill = "transparent", colour = "grey", size = 0.5) + 
+  # Add the filtered top 3 ranked locations
+  geom_sf(data = filtered_top_3, aes(geometry = geometry, fill = factor(Rank)), size = 0.5) + 
+  scale_fill_manual(
+    values = c("red4", "orange4", "yellow4"),  # Assign colors to Rank 1, 2, and 3
+    name = "Rank",
+    labels = c("Rank 1", "Rank 2", "Rank 3")  # Legend labels
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Agricultural and Related Trades main proportional employment industry",
+    subtitle = "2021 MSOAs where Agricultural and Related Trades is the top 3 proportional employment industry using Census 2021 data",
+    color = "Rank"
+  ) +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+ggsave("top3_employ_census.png", device = "png", width = 45, height = 45, dpi = 200)
+```
