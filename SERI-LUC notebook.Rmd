@@ -9,19 +9,20 @@ Load Packages
 library(sf)
 library(tidyverse)
 library(ggplot2)
-library(Cairo)
 library(nomisr)
+library(httr)
+library(readxl)
 ```
 
 Load Data
 ```{r Load data, include=FALSE}
-#Load 2021 MSOA boundary file
+# Load 2021 MSOA boundary file
 MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp")
 
-#Load 2011 MSOA boundary file
+# Load 2011 MSOA boundary file
 MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg")
 
-#Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry working in each 2011 MSOA
+# Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry working in each 2011 MSOA
 bres_sec_emp <- nomis_get_data(
   id = "NM_189_1",
   geography = "TYPE297",
@@ -32,7 +33,7 @@ bres_sec_emp <- nomis_get_data(
   measures = 20100
 )
 
-#Load Census 2021 data on the number of 
+# Load Census 2021 data on the number of employees per 3-digit SOC 2020 industry in each MSOA
 census_sec_emp <- nomis_get_data(
   id = "NM_2081_1",
   geography = "TYPE152",
@@ -40,6 +41,12 @@ census_sec_emp <- nomis_get_data(
   measures = 20100
 )
 
+# Load ONS experimental occupational skills dataset
+temp_file <- tempfile(fileext = ".xlsx")
+
+download.file("https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/labourproductivity/datasets/skillssupplyestimates2012to2023/august2024/skillssupply2012to2023.xlsx", temp_file, mode = "wb") # onsr does not have this dataset available, so loading it from link instead
+
+ons_occ_skills <- read_excel(temp_file, sheet = 4, skip = 4)
 ```
 ##### BRES based analysis #####
 
@@ -228,6 +235,7 @@ ggsave("agri_01pct_total_MSOA.png", device = "png", width = 45, height = 45, dpi
 
 ##### Census based analysis #####
 
+Plot proportion Agri (511) of total employment
 ```{r}
 # Filter and summarize census data for the required categories
 filtered_census_data <- census_sec_emp %>%
@@ -248,11 +256,6 @@ census_merged_data <- MSOA_21_boundary %>%
     AGRI_PERCENTAGE = ifelse(SUM_OBS_TOTAL > 0, SUM_OBS_AGRI / SUM_OBS_TOTAL * 100, NA)  # Calculate percentage
   )
 
-```
-
-```{r}
-
-##### Agriculture proportion employment #####
 # Map agriculture proportion of total employment
 ggplot(data = census_merged_data) +
   geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.001) + 
@@ -279,9 +282,10 @@ ggsave("agri_percentage_census.png", device = "png", width = 45, height = 45, dp
 
 ```
 
+Estimate the leading employment industries in each MSOA
 ```{r}
 
-# Process the census data
+# Estimate the proportion of total employment for each industry in the census data
 processed_data <- census_sec_emp %>%
   filter(str_starts(GEOGRAPHY_CODE, "E")) %>%  # Filter for GEOGRAPHY_CODE starting with "E"
   group_by(GEOGRAPHY_CODE) %>%  # Group by each unique GEOGRAPHY_CODE
@@ -346,6 +350,7 @@ print(top_3_employ_counts)
 
 ```
 
+Plot the MSOAs where agri (511) is the leading employment industry
 ```{r}
 # Merge top_3_values with MSOA_21_boundary to include geometry
 top_3_with_geometry <- top_3_values %>%
@@ -410,3 +415,132 @@ ggplot() +
 
 ggsave("top3_employ_census.png", device = "png", width = 45, height = 45, dpi = 200)
 ```
+
+Skill matching for Agri (511) industry
+```{r}
+# Function to compare skills for all occupations against a given SOC 2020 code
+compare_all_skills <- function(data, reference_soc_code) {
+  # Filter skills for the reference SOC 2020 code
+  reference_skills <- data %>%
+    filter(`SOC 2020 code` == reference_soc_code) %>%
+    select(`Skill O*NET identifier`, `Average competence level (0 to 7 scale)`) %>%
+    rename(`reference_level` = `Average competence level (0 to 7 scale)`)
+  
+  # Join the reference skills with the full dataset
+  comparison <- data %>%
+    inner_join(reference_skills, by = "Skill O*NET identifier") %>%
+    mutate(is_equal_or_lower = `Average competence level (0 to 7 scale)` <= reference_level,
+           is_within_5_percent = `Average competence level (0 to 7 scale)` <= reference_level * 1.05,
+           is_within_10_percent = `Average competence level (0 to 7 scale)` <= reference_level * 1.10) %>%
+    distinct(`SOC 2020 code`, `SOC 2020 unit group title`, `Skill O*NET identifier`, .keep_all = TRUE)  # Ensure unique skill per occupation
+  
+  # Summarize the results for each occupation
+  result <- comparison %>%
+    group_by(`SOC 2020 code`, `SOC 2020 unit group title`) %>%
+    summarize(
+      equal_or_lower_skill_count = sum(is_equal_or_lower),
+      within_5_percent_skill_count = sum(is_within_5_percent),
+      within_10_percent_skill_count = sum(is_within_10_percent),
+      .groups = "drop"
+    )
+  
+  # Rank the occupations based on the number of matching skills
+  result <- result %>%
+    mutate(
+      rank_equal_or_lower = rank(-equal_or_lower_skill_count, ties.method = "min"),
+      rank_within_5_percent = rank(-within_5_percent_skill_count, ties.method = "min"),
+      rank_within_10_percent = rank(-within_10_percent_skill_count, ties.method = "min"),
+      # Create the 3-digit SOC code by removing the last digit of the SOC 2020 code
+      `3 digit SOC 2020 code` = substr(as.character(`SOC 2020 code`), 1, 3)
+    )
+  
+  # Calculate the average skill counts for each 3-digit SOC code
+  result <- result %>%
+    group_by(`3 digit SOC 2020 code`) %>%
+    mutate(
+      avg_equal_or_lower_skill_count = mean(equal_or_lower_skill_count, na.rm = TRUE),
+      avg_within_5_percent_skill_count = mean(within_5_percent_skill_count, na.rm = TRUE),
+      avg_within_10_percent_skill_count = mean(within_10_percent_skill_count, na.rm = TRUE)
+    ) %>%
+    ungroup()  # Remove grouping
+  
+  return(result)
+}
+
+# Run the function with SOC 2020 code 5111 for the "Farmers" occupation
+farmers_skill_level <- compare_all_skills(ons_occ_skills, 5111)
+
+```
+
+```{r}
+# Sort the result by avg_equal_or_lower_skill_count in descending order and select the top 10 excluding the first entry (first entry will likely be the same SOC as target)
+top_10_soc_group <- compare_all_skills(ons_occ_skills, 5111) %>%
+  arrange(desc(avg_equal_or_lower_skill_count)) %>%
+  select(`3 digit SOC 2020 code`, avg_equal_or_lower_skill_count) %>%
+  distinct(`3 digit SOC 2020 code`, .keep_all = TRUE) %>%
+  filter(!`3 digit SOC 2020 code` %in% c("511", "911")) # Filter out other Agri codes
+
+# Extract the first 3 characters of C2021_OCC_105_NAME to match with `3 digit SOC 2020 code`
+census_sec_emp_selected <- census_sec_emp %>%
+  mutate(`3 digit SOC 2020 code` = substr(C2021_OCC_105_NAME, 1, 3)) %>%
+  select(`3 digit SOC 2020 code`, C2021_OCC_105) %>%
+  distinct(`3 digit SOC 2020 code`, .keep_all = TRUE) # only keep unique values
+
+# Merge the `top_10` list with the selected `C2021_OCC_105` column
+top_10_occ_105_group <- top_10_excluding_top_1 %>%
+  left_join(census_sec_emp_selected, by = "3 digit SOC 2020 code")
+
+# Print the matched results
+print(top_10_occ_105_group)
+```
+
+```{r}
+# Convert both columns to character type before joining
+matched_census_data <- census_sec_emp %>%
+  mutate(C2021_OCC_105 = as.character(C2021_OCC_105)) %>%
+  semi_join(
+    top_10_occ_105_group %>% 
+      mutate(C2021_OCC_105 = as.character(C2021_OCC_105)), 
+    by = "C2021_OCC_105"
+  )
+
+# Summarize the OBS_VALUE for each GEOGRAPHY_CODE
+top_occ_sum_per_geography <- matched_census_data %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  summarize(total_obs_value = sum(OBS_VALUE, na.rm = TRUE), .groups = "drop")
+
+# Filter the MSOA boundary and top_occ_sum_per_geography data to include only entries for England
+filtered_boundary <- MSOA_21_boundary %>%
+  filter(substr(MSOA21CD, 1, 1) == "E")
+
+filtered_top_occ_sum_per_geography <- top_occ_sum_per_geography %>%
+  filter(substr(GEOGRAPHY_CODE, 1, 1) == "E")
+
+# Merge top_occ_sum_per_geography with MSOA_21_boundary based on GEOGRAPHY_CODE and MSOA21CD
+top_occ_sum_geo_sf <- filtered_top_occ_sum_per_geography %>%
+  left_join(filtered_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD"))
+
+# Plot the top 10 skill-matching industry total employment by MSOA
+ggplot(data = top_occ_sum_geo_sf) +  
+  geom_sf(aes(geometry = geometry, fill = ifelse(total_obs_value == 0, NA, total_obs_value)), color = "grey", size = 0.1) +
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Employment Count") +  # Continuous fill scale for values
+  theme_minimal() +
+  labs(title = "Total Employment in top 10 skill matching industries by MSOA",
+       subtitle = "Skills matched based on ONS' 'Important skills required per occupation'") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("skill_match_plot.png", device = "png", width = 45, height = 45, dpi = 200)
+
+```
+
