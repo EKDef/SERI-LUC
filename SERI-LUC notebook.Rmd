@@ -12,15 +12,19 @@ library(ggplot2)
 library(nomisr)
 library(httr)
 library(readxl)
+library(biscale)
+library(cowplot)
 ```
 
 Load Data
 ```{r Load data, include=FALSE}
-# Load 2021 MSOA boundary file
-MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp")
+# Load 2021 MSOA boundary file and filter for England only
+MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp") %>%
+  filter(substr(MSOA21CD, 1, 1) == "E")
 
-# Load 2011 MSOA boundary file
-MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg")
+# Load 2011 MSOA boundary file and filter for England only
+MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg") %>%
+  filter(substr(MSOA21CD, 1, 1) == "E")
 
 # Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry working in each 2011 MSOA
 bres_sec_emp <- nomis_get_data(
@@ -68,17 +72,11 @@ final_df <- left_join(summed_df, summed_industry_df, by = "GEOGRAPHY")
 
 # Calculate the percentage of SUM_OBS_AGRI in SUM_OBS_TOTAL for each GEOGRAPHY
 final_df <- final_df %>%
-  mutate(AGRI_PERCENTAGE = (SUM_OBS_AGRI / SUM_OBS_TOTAL) * 100)
-
-# Filter the MSOA boundary and final_df data to include only entries for England
-filtered_boundary <- MSOA_11_boundary %>%
-  filter(substr(MSOA11CD, 1, 1) == "E")
-
-filtered_final_df <- final_df %>%
+  mutate(AGRI_PERCENTAGE = (SUM_OBS_AGRI / SUM_OBS_TOTAL) * 100) %>%
   filter(substr(GEOGRAPHY_CODE, 1, 1) == "E")
 
 # Merge the employment sums data with the MSOA boundary file
-merged_data <- left_join(filtered_boundary, filtered_final_df, by = c("MSOA11CD" = "GEOGRAPHY_CODE"))
+merged_data <- left_join(MSOA_11_boundary, final_df, by = c("MSOA11CD" = "GEOGRAPHY_CODE"))
 
 ```
 Summary Stats
@@ -250,7 +248,6 @@ filtered_census_data <- census_sec_emp %>%
 
 # Merge the summarised census data with the shapefile
 census_merged_data <- MSOA_21_boundary %>%
-  filter(str_starts(MSOA21CD, "E")) %>%  # Filter MSOA21CD to include only those starting with "E"
   left_join(filtered_census_data, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
   mutate(
     AGRI_PERCENTAGE = ifelse(SUM_OBS_TOTAL > 0, SUM_OBS_AGRI / SUM_OBS_TOTAL * 100, NA)  # Calculate percentage
@@ -495,34 +492,48 @@ print(top_10_occ_105_group)
 ```
 
 ```{r}
-# Convert both columns to character type before joining
+# Convert both columns to character and filter matching occupations
 matched_census_data <- census_sec_emp %>%
   mutate(C2021_OCC_105 = as.character(C2021_OCC_105)) %>%
   semi_join(
-    top_10_occ_105_group %>% 
-      mutate(C2021_OCC_105 = as.character(C2021_OCC_105)), 
+    top_10_occ_105_group %>% mutate(C2021_OCC_105 = as.character(C2021_OCC_105)), 
     by = "C2021_OCC_105"
   )
 
-# Summarize the OBS_VALUE for each GEOGRAPHY_CODE
-top_occ_sum_per_geography <- matched_census_data %>%
+# Summarize total OBS_VALUE for matching occupations and overall employment (C2021_OCC_105 = 0)
+top_occ_sum_per_geography <- census_sec_emp %>%
+  mutate(C2021_OCC_105 = as.character(C2021_OCC_105)) %>%
   group_by(GEOGRAPHY_CODE) %>%
-  summarize(total_obs_value = sum(OBS_VALUE, na.rm = TRUE), .groups = "drop")
-
-# Filter the MSOA boundary and top_occ_sum_per_geography data to include only entries for England
-filtered_boundary <- MSOA_21_boundary %>%
-  filter(substr(MSOA21CD, 1, 1) == "E")
-
-filtered_top_occ_sum_per_geography <- top_occ_sum_per_geography %>%
+  summarize(
+    top_occ_obs_value = sum(OBS_VALUE[C2021_OCC_105 %in% top_10_occ_105_group$C2021_OCC_105], na.rm = TRUE),
+    total_obs_value = sum(OBS_VALUE[C2021_OCC_105 == "0"], na.rm = TRUE),
+    agri_obs_value = sum(OBS_VALUE[C2021_OCC_105 == "60"], na.rm = TRUE),
+    top_percentage_value = ifelse(
+      total_obs_value > 0, 
+      (top_occ_obs_value / total_obs_value) * 100, 
+      NA_real_  # Assign NA if total_obs_value is 0
+    ),
+    agri_percentage_value = ifelse(
+      agri_obs_value > 0, 
+      (agri_obs_value / total_obs_value) * 100, 
+      NA_real_  # Assign NA if total_obs_value is 0
+    ),
+    agri_top_ratio = ifelse(
+      agri_obs_value > 0, 
+      (agri_obs_value / top_occ_obs_value), 
+      NA_real_  # Assign NA if agri_obs_value is 0
+    ),
+    .groups = "drop"
+  ) %>%
   filter(substr(GEOGRAPHY_CODE, 1, 1) == "E")
 
 # Merge top_occ_sum_per_geography with MSOA_21_boundary based on GEOGRAPHY_CODE and MSOA21CD
-top_occ_sum_geo_sf <- filtered_top_occ_sum_per_geography %>%
+top_occ_sum_geo_sf <- top_occ_sum_per_geography %>%
   left_join(filtered_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD"))
 
 # Plot the top 10 skill-matching industry total employment by MSOA
 ggplot(data = top_occ_sum_geo_sf) +  
-  geom_sf(aes(geometry = geometry, fill = ifelse(total_obs_value == 0, NA, total_obs_value)), color = "grey", size = 0.1) +
+  geom_sf(aes(geometry = geometry, fill = ifelse(top_occ_obs_value == 0, NA, top_occ_obs_value)), color = "grey", size = 0.1) +
   scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Employment Count") +  # Continuous fill scale for values
   theme_minimal() +
   labs(title = "Total Employment in top 10 skill matching industries by MSOA",
@@ -541,6 +552,107 @@ ggplot(data = top_occ_sum_geo_sf) +
 
 # Save the plot
 ggsave("skill_match_plot.png", device = "png", width = 45, height = 45, dpi = 200)
+
+# Plot the top 10 skill-matching industry as proportion of total employment by MSOA
+ggplot(data = top_occ_sum_geo_sf) +  
+  geom_sf(aes(geometry = geometry, fill = ifelse(top_percentage_value == 0, NA, top_percentage_value)), color = "grey", size = 0.1) +
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Proportion of total employment") +  # Continuous fill scale for values
+  theme_minimal() +
+  labs(title = "Proportional employment in top 10 skill matching industries by MSOA",
+       subtitle = "Skills matched based on ONS' 'Important skills required per occupation'") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("skill_match_percentage.png", device = "png", width = 45, height = 45, dpi = 200)
+
+# Plot the top 10 skill-matching industry as proportion of total employment by MSOA
+ggplot(data = top_occ_sum_geo_sf) +  
+  geom_sf(aes(geometry = geometry, fill = ifelse(agri_top_ratio == 0, NA, agri_top_ratio)), color = "grey", size = 0.1) +
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agri/Top 10 skill-matched industry employment ratio") +  # Continuous fill scale for values
+  theme_minimal() +
+  labs(title = "Ratio between Agri (511) and top 10 skill matching industries by MSOA",
+       subtitle = "Skills matched based on ONS' 'Important skills required per occupation'") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        axis.text = element_text(size = 30),                    # Adjust axis text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("skill_match_ratio.png", device = "png", width = 45, height = 45, dpi = 200)
+
+```
+
+```{r}
+# Classify data for the bivariate map
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  bi_class(
+    x = agri_percentage_value,
+    y = top_percentage_value,
+    style = "quantile",  # or "equal" depending on your needs
+    dim = 3              # 3x3 grid for 9 bivariate color categories
+  )
+
+# Plot the bivariate map
+bivariate_map <- ggplot(top_occ_sum_geo_sf) +
+  geom_sf(aes(geometry = geometry, fill = bi_class), color = "grey", size = 0.1) +
+  bi_scale_fill(pal = "DkViolet", dim = 3) +  # Choose a color palette
+  labs(
+    title = "Bivariate Choropleth: Agriculture vs Top 10 Industry Employment (%)",
+    subtitle = "Comparison of Agricultural and Top 10 Occupation Percentages by MSOA",
+    caption = "Source: Census Employment Data"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(size = 48, hjust = 0.5),
+    plot.subtitle = element_text(size = 44, hjust = 0.5),
+    plot.caption = element_text(size = 24, hjust = 0.5),
+  ) + 
+    guides(fill = "none")
+
+# Add a legend to the map
+bivariate_legend <-
+  bi_legend(
+    pal = "DkViolet",
+    dim = 3,
+    xlab = "Higher Agricultural %",
+    ylab = "Higher Top Industry %",
+    size = 32  # Adjust legend size
+  ) +
+  theme(
+    plot.background = element_rect(fill = "grey90"),
+    legend.background = element_rect(fill = "grey90"))
+
+# Combine the map and legend using cowplot
+final_plot <- cowplot::plot_grid(
+  bivariate_map, 
+  bivariate_legend, 
+  ncol = 2,         # Place map and legend side by side
+  rel_widths = c(4, 1)  # Adjust the relative widths of the map and legend
+)
+
+# Save the plot
+ggsave("bi_chorop_agri_skill_match.png", device = "png", width = 45, height = 45, dpi = 200)
 
 ```
 
