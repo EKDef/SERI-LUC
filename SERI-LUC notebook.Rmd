@@ -24,7 +24,7 @@ MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geograp
 
 # Load 2011 MSOA boundary file and filter for England only
 MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg") %>%
-  filter(substr(MSOA21CD, 1, 1) == "E")
+  filter(substr(MSOA11CD, 1, 1) == "E")
 
 # Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry working in each 2011 MSOA
 bres_sec_emp <- nomis_get_data(
@@ -377,14 +377,11 @@ ggplot(data = filtered_top_3) +
     panel.grid.minor = element_blank()
   )
 
-# Filter MSOA_21_boundary for values where MSOA21CD starts with "E"
-eng_MSOA_21_boundary <- MSOA_21_boundary %>%
-  filter(startsWith(MSOA21CD, "E"))
 
 # Plot the filtered data with boundaries underneath
 ggplot() +
   # Add grey boundaries from MSOA_21_boundary
-  geom_sf(data = eng_MSOA_21_boundary, fill = "transparent", colour = "grey", size = 0.5) + 
+  geom_sf(data = MSOA_21_boundary, fill = "transparent", colour = "grey", size = 0.5) + 
   # Add the filtered top 3 ranked locations
   geom_sf(data = filtered_top_3, aes(geometry = geometry, fill = factor(Rank)), size = 0.5) + 
   scale_fill_manual(
@@ -469,6 +466,7 @@ farmers_skill_level <- compare_all_skills(ons_occ_skills, 5111)
 
 ```
 
+Identify the top 10 highest average skill compatible occupation (3-digit) groups
 ```{r}
 # Sort the result by avg_equal_or_lower_skill_count in descending order and select the top 10 excluding the first entry (first entry will likely be the same SOC as target)
 top_10_soc_group <- compare_all_skills(ons_occ_skills, 5111) %>%
@@ -491,6 +489,7 @@ top_10_occ_105_group <- top_10_excluding_top_1 %>%
 print(top_10_occ_105_group)
 ```
 
+Plot the total employment in the top 10 skill-matching occ groups
 ```{r}
 # Convert both columns to character and filter matching occupations
 matched_census_data <- census_sec_emp %>%
@@ -516,7 +515,7 @@ top_occ_sum_per_geography <- census_sec_emp %>%
     agri_percentage_value = ifelse(
       agri_obs_value > 0, 
       (agri_obs_value / total_obs_value) * 100, 
-      NA_real_  # Assign NA if total_obs_value is 0
+      0  # Assign NA if total_obs_value is 0
     ),
     agri_top_ratio = ifelse(
       agri_obs_value > 0, 
@@ -529,7 +528,8 @@ top_occ_sum_per_geography <- census_sec_emp %>%
 
 # Merge top_occ_sum_per_geography with MSOA_21_boundary based on GEOGRAPHY_CODE and MSOA21CD
 top_occ_sum_geo_sf <- top_occ_sum_per_geography %>%
-  left_join(filtered_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD"))
+  left_join(filtered_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD")) %>%
+  st_as_sf()
 
 # Plot the top 10 skill-matching industry total employment by MSOA
 ggplot(data = top_occ_sum_geo_sf) +  
@@ -599,6 +599,7 @@ ggsave("skill_match_ratio.png", device = "png", width = 45, height = 45, dpi = 2
 
 ```
 
+Agri (511) and top 10 skill-matched occ group Bivariate plot
 ```{r}
 # Classify data for the bivariate map
 top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
@@ -609,12 +610,12 @@ top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
     dim = 3              # 3x3 grid for 9 bivariate color categories
   )
 
-# Plot the bivariate map
+# Plot the bivariate choropleth map
 bivariate_map <- ggplot(top_occ_sum_geo_sf) +
   geom_sf(aes(geometry = geometry, fill = bi_class), color = "grey", size = 0.1) +
   bi_scale_fill(pal = "DkViolet", dim = 3) +  # Choose a color palette
   labs(
-    title = "Bivariate Choropleth: Agriculture vs Top 10 Industry Employment (%)",
+    title = "Bivariate plot of Agriculture vs Top 10 Skill-Matched Industry Employment (%)",
     subtitle = "Comparison of Agricultural and Top 10 Occupation Percentages by MSOA",
     caption = "Source: Census Employment Data"
   ) +
@@ -641,7 +642,7 @@ bivariate_legend <-
   ) +
   theme(
     plot.background = element_rect(fill = "grey90"),
-    legend.background = element_rect(fill = "grey90"))
+    panel.background = element_rect(fill = "grey90"))
 
 # Combine the map and legend using cowplot
 final_plot <- cowplot::plot_grid(
@@ -654,5 +655,57 @@ final_plot <- cowplot::plot_grid(
 # Save the plot
 ggsave("bi_chorop_agri_skill_match.png", device = "png", width = 45, height = 45, dpi = 200)
 
+```
+Generate an interactive bivariate Agri (511) and top 10 skill-matched occ group leaflet plot  
+```{r}
+
+# Ensure geometry is valid and CRS is correct
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  st_make_valid() %>%
+  st_transform(crs = 4326)
+
+# Simplify geometry for rendering
+top_occ_sum_geo_sf <- st_simplify(top_occ_sum_geo_sf, dTolerance = 50)
+
+# Define the colour palette
+bivariate_colors <- c(
+  "1-1" = "#cabed0",
+  "1-2" = "#89a1c8",
+  "1-3" = "#4885c1",
+  "2-1" = "#bc7c8f",
+  "2-2" = "#806a8a",
+  "2-3" = "#435786",
+  "3-1" = "#ae3a4e",
+  "3-2" = "#77324c",
+  "3-3" = "#3f2949"
+)
+
+# Match colour palette with bivariate classes 
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  mutate(
+    color_values = ifelse(
+      !is.na(bi_class) & bi_class %in% names(bivariate_colors),
+      bivariate_colors[bi_class],
+      "grey90"  # Fallback for missing or invalid classes
+    )
+  )
+
+# Generate the leaflet plot
+map <- leaflet(top_occ_sum_geo_sf) %>%
+  addPolygons(
+    fillColor = ~color_values,
+    weight = 0.5,
+    color = "grey90",
+    fillOpacity = 0.7,
+    popup = ~paste(
+      "<b>MSOA:</b>", MSOA21NM, "<br>",
+      "<b>Agriculture %:</b>", round(agri_percentage_value, 1), "<br>",
+      "<b>Top 10 Industry %:</b>", round(top_percentage_value, 1)
+    )
+  )
+
+# Save and open in browser
+htmlwidgets::saveWidget(map, "interactive_map.html")
+browseURL("interactive_map.html")
 ```
 
