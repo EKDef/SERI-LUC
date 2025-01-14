@@ -1,0 +1,534 @@
+---
+title: "SERI-LUC PoC spatial skill analysis"
+format: html
+editor: visual
+echo: false
+warning: false
+message: false
+---
+
+## Introduction
+
+The aim of this analysis is to investigate the resilience of local labour markets to external (land use change derived) shocks and to act as a proof of concept for further work by identifying available data and methodologies. This document will focus on agriculture (specifically SOC 511 and 911) as the primary industry receiving the shocks to serve as an example due to its relative prominence in rural areas. However, the analysis framework is flexible and can be applied to any industry measured in Census 2021 data. Subsequent analysis is done at MSOA level as is avoids disclosure issues for public datasets present at smaller levels while still maintaining sufficient spatial resolution to draw out local patterns.
+
+```{r}
+#| label: load packages
+
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(nomisr)
+library(httr)
+library(readxl)
+library(biscale)
+library(cowplot)
+library(kableExtra)
+```
+
+```{r}
+#| label: load-data
+#| include: false
+
+# Load 2021 MSOA boundary file and filter for England only
+MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp") %>%
+  filter(substr(MSOA21CD, 1, 1) == "E")
+
+# Load Census 2021 data on the number of employees per 3-digit SOC 2020 industry in each MSOA
+census_sec_emp <- nomis_get_data(
+  id = "NM_2081_1",
+  geography = "TYPE152",
+  c2021_occ_105 = "0...104",
+  measures = 20100
+)
+
+# Load ONS experimental occupational skills dataset
+temp_file <- tempfile(fileext = ".xlsx")
+
+download.file("https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/labourproductivity/datasets/skillssupplyestimates2012to2023/august2024/skillssupply2012to2023.xlsx", temp_file, mode = "wb") # onsr does not have this dataset available, so loading it from link instead
+
+ons_occ_skills <- read_excel(temp_file, sheet = 4, skip = 4)
+```
+
+## Relative local prevalence of agriculture in the labour market
+
+```{r}
+#| label: fig-agri-plot
+#| fig-cap: "Figure 1 - Agriculture proportional employment"
+
+# Filter and summarize census data for the required categories
+filtered_census_data <- census_sec_emp %>%
+  filter(C2021_OCC_105 %in% c(0, 60)) %>%   # Retain rows where C2021_OCC_105 is 0 or 60
+  mutate(Category = case_when(
+    C2021_OCC_105 == 0 ~ "SUM_OBS_TOTAL",  # Rename categories
+    C2021_OCC_105 == 60 ~ "SUM_OBS_AGRI"
+  )) %>%
+  group_by(GEOGRAPHY_CODE, Category) %>%    # Group by geography and category
+  summarise(SUM_OBS_VALUE = sum(OBS_VALUE, na.rm = TRUE), .groups = "drop") %>% 
+  pivot_wider(names_from = Category, values_from = SUM_OBS_VALUE, values_fill = 0)  # Reshape to wide format
+
+# Merge the summarised census data with the shapefile
+census_merged_data <- MSOA_21_boundary %>%
+  left_join(filtered_census_data, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  mutate(
+    AGRI_PERCENTAGE = ifelse(SUM_OBS_TOTAL > 0, SUM_OBS_AGRI / SUM_OBS_TOTAL * 100, NA)  # Calculate percentage
+  )
+
+# Map agriculture proportion of total employment
+agri_prop_plot <- ggplot(data = census_merged_data) +
+  geom_sf(aes(fill = ifelse(AGRI_PERCENTAGE == 0, NA, AGRI_PERCENTAGE)), color = "grey", size = 0.001) + 
+  # Boundary lines are grey, areas with 0 are set to NA
+  scale_fill_viridis_c(option = "plasma", na.value = "white", name = "Agriculture %") +  
+  # White for areas with 0 values
+  theme_minimal() +
+  labs(title = "Agricultural and Related Trades (511) proportional employment",
+       subtitle = "Agricultural and Related Trades as a percentage of total employment by 2021 MSOA",
+       caption = "Source: Census 2021") +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+# Save the plot
+ggsave("agri_percentage_census_v2.png", device = "png", width = 45, height = 45, dpi = 200)
+
+knitr::include_graphics("agri_percentage_census_v2.png")
+```
+
+First, we investigate the local prevalence of agriculture in the local labour market by ploting the proportion that Agriculture and Related trades (511) makes up of total employment. The figure above shows somewhat intuitive patters where rural areas have higher agriculture proportional employment and urban areas have low. It is also unclear from the relatively low maximum proportion of \~12.5% across all MSOAs if agriculture is a pivotal industry where a significant shock (e.g., 15% decline in employment) would lead to significant socio-economic impacts. However, clustering between MSOAs is also apparent especially in the South West, near the Welsh border and the North which combined with second-order industry spillovers could cumulatively add to greater impacts.
+
+## Agriculture as leading employment industry
+
+```{r}
+#| label: fig-leading-industry
+#| fig-cap: "Figure 2 - Agriculture as top 3 source of employment"
+
+
+# Estimate the proportion of total employment for each industry in the census data
+processed_data <- census_sec_emp %>%
+  filter(str_starts(GEOGRAPHY_CODE, "E")) %>%  # Filter for GEOGRAPHY_CODE starting with "E"
+  group_by(GEOGRAPHY_CODE) %>%  # Group by each unique GEOGRAPHY_CODE
+  mutate(
+    # Get the OBS_VALUE where C2021_OCC_105 is 0 for each GEOGRAPHY_CODE
+    Total_OBS_VALUE = OBS_VALUE[C2021_OCC_105 == 0],
+    # Divide each OBS_VALUE by the Total_OBS_VALUE
+    PERC_OBS_VALUE = ifelse(!is.na(Total_OBS_VALUE) & Total_OBS_VALUE > 0, OBS_VALUE / Total_OBS_VALUE, NA)
+  ) %>%
+  ungroup()  # Ungroup after processing
+
+# Extract the top 3 values for each GEOGRAPHY_CODE, excluding rows where C2021_OCC_105 == 0
+top_3_values <- processed_data %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  filter(!is.na(PERC_OBS_VALUE) & C2021_OCC_105 != 0) %>%  # Exclude the overall total
+  arrange(desc(PERC_OBS_VALUE)) %>%
+  slice_max(order_by = PERC_OBS_VALUE, n = 3, with_ties = FALSE) %>%
+  mutate(Rank = row_number()) %>%
+  ungroup()
+
+# Merge top_3_values with MSOA_21_boundary to include geometry
+top_3_geometry <- top_3_values %>%
+  inner_join(MSOA_21_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD")) %>%
+  filter(C2021_OCC_105_CODE == "_60")
+
+# Plot the filtered data with boundaries underneath
+agri_rank_plot <- ggplot() +
+  # Add grey boundaries from MSOA_21_boundary
+  geom_sf(data = MSOA_21_boundary, fill = "transparent", colour = "grey", size = 0.5) + 
+  # Add the filtered top 3 ranked locations
+  geom_sf(data = top_3_geometry, aes(geometry = geometry, fill = factor(Rank)), size = 0.5) + 
+  scale_fill_manual(
+    values = c("#006837", "#66bd62", "#d9ef8b"),  # Assign colors to Rank 1, 2, and 3
+    name = "Employment Source Rank",
+    labels = c("Top 1", "Top 2", "Top 3")  # Legend labels
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Agricultural and Related Trades main proportional employment industry",
+    subtitle = "2021 MSOAs where Agricultural and Related Trades is the top 3 proportional employment industry using Census 2021 data",
+    color = "Rank"
+  ) +
+  theme(legend.position = "right", 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = 48, hjust = 0.5),      # Adjust title size
+        plot.subtitle = element_text(size = 44, hjust = 0.5),   # Adjust subtitle size
+        legend.title = element_text(size = 32),                 # Adjust legend title size
+        legend.text = element_text(size = 30),                  # Adjust legend text size
+        legend.key.height = unit(4.5, "cm"),                    # Adjust the height of the legend key
+        legend.key.width = unit(4.5, "cm")                      # Adjust the width of the legend key
+  )
+
+ggsave("top3_employ_census_v2.png", device = "png", width = 45, height = 45, dpi = 200)
+
+knitr::include_graphics("top3_employ_census_v2.png")
+
+```
+
+Plotting the MSOAs where agriculture is in the top 3 proportional sources of employment indicates that the areas with high proportional employment in agriculture also tend to have agriculture as the leading source of employment. This suggests that even without employing the majority of the workers in a given area, labour markets may still be sensitive to shocks in agriculture employment as it is the largest source of employment across a wide clustered geographic area. This leads to the question of how well are these locations able to absorb shocks to the major sources of employment which is explored in the next section.
+
+```{r}
+#| label: skill-comp-function
+
+# Function to compare skills for all occupations against a given SOC 2020 code
+compare_all_skills <- function(data, reference_soc_code) {
+  # Filter skills for the reference SOC 2020 code
+  reference_skills <- data %>%
+    filter(`SOC 2020 code` == reference_soc_code) %>%
+    select(`Skill O*NET identifier`, `Average competence level (0 to 7 scale)`) %>%
+    rename(`reference_level` = `Average competence level (0 to 7 scale)`)
+  
+  # Join the reference skills with the full dataset
+  comparison <- data %>%
+    inner_join(reference_skills, by = "Skill O*NET identifier") %>%
+    mutate(is_equal_or_lower = `Average competence level (0 to 7 scale)` <= reference_level,
+           is_within_5_percent = `Average competence level (0 to 7 scale)` <= reference_level * 1.05,
+           is_within_10_percent = `Average competence level (0 to 7 scale)` <= reference_level * 1.10) %>%
+    distinct(`SOC 2020 code`, `SOC 2020 unit group title`, `Skill O*NET identifier`, .keep_all = TRUE)  # Ensure unique skill per occupation
+  
+  # Summarize the results for each occupation
+  result <- comparison %>%
+    group_by(`SOC 2020 code`, `SOC 2020 unit group title`) %>%
+    summarize(
+      equal_or_lower_skill_count = sum(is_equal_or_lower),
+      within_5_percent_skill_count = sum(is_within_5_percent),
+      within_10_percent_skill_count = sum(is_within_10_percent),
+      .groups = "drop"
+    ) %>%
+    mutate(      
+      # Create the 3-digit SOC code by removing the last digit of the SOC 2020 code
+      `3 digit SOC 2020` = substr(as.character(`SOC 2020 code`), 1, 3)
+      )
+  
+  # Calculate the average skill counts for each 3-digit SOC code
+  result <- result %>%
+    group_by(`3 digit SOC 2020`) %>%
+    mutate(
+      avg_equal_or_lower_skill_count = mean(equal_or_lower_skill_count, na.rm = TRUE),
+      avg_within_5_percent_skill_count = mean(within_5_percent_skill_count, na.rm = TRUE),
+      avg_within_10_percent_skill_count = mean(within_10_percent_skill_count, na.rm = TRUE)
+    ) %>%
+    ungroup()  # Remove grouping
+  
+  return(result)
+}
+
+# Sort the result by avg_equal_or_lower_skill_count in descending order and select the top 10, excluding other agricultural SOCs
+top_10_soc_group <- compare_all_skills(ons_occ_skills, 5111) %>%
+  arrange(desc(avg_equal_or_lower_skill_count)) %>%
+  filter(!`3 digit SOC 2020` %in% c("511", "911")) %>% # Filter out other Agri codes
+  distinct(`3 digit SOC 2020`, .keep_all = TRUE) %>%
+  slice_head(n = 10) %>%
+  select(`3 digit SOC 2020`, avg_equal_or_lower_skill_count)
+
+# Extract the first 3 characters of C2021_OCC_105_NAME to match with `3 digit SOC 2020`
+census_sec_emp_selected <- census_sec_emp %>%
+  mutate(`3 digit SOC 2020` = substr(C2021_OCC_105_NAME, 1, 3)) %>%
+  select(`3 digit SOC 2020`, C2021_OCC_105) %>%
+  distinct(`3 digit SOC 2020`, .keep_all = TRUE) # only keep unique values
+
+# Merge the `top_10` list with the selected `C2021_OCC_105` column
+top_10_occ_105_group <- top_10_soc_group %>%
+  left_join(census_sec_emp_selected, by = "3 digit SOC 2020")
+```
+
+## Skill-Matching between industries
+
+ONS experimental skill data analysing the required skills (covering 132 different ratings from Systems Analysis to Arm-Hand Steadiness) for workers in a given industry provides a more objective platform to evaluate the ability of a given worker to transfer to another industry in the short-run. This is based on the assumption that in the long and medium-run new labour market entrants would be trained to meet the needs of the post-shock equilibrium, meanwhile in the short-run the ability to retrain is time limited and as such will be restricting workers to industries close to their existing skill-set. A similar assumption is applied to geographic mobility where in the short-run, geographic labour movement is limited to within the MSOA.
+
+To identify industries that an agriculture worker would be able to transfer to with minimal retraining, the skills required are compared to all other industries. The instances where skills required for a worker in agriculture are higher than those in another industry are counted and displayed in the table below (+-5% and +-10% worker skill ratings are also calculated for sensitivity tests). Since the skill data is provided for 4-digit SOC codes and employment data is available at 3-digit SOC codes, the average skill count for a 3-digit group are calculated and used going forward.
+
+```{r}
+#| label: skill-matched table
+
+# Run the function with SOC 2020 code 5111 for the "Farmers" occupation
+farmers_skill_level <- compare_all_skills(ons_occ_skills, 5111) %>%
+  arrange(desc(avg_equal_or_lower_skill_count))
+
+# Print the matched results in a table
+farmers_skill_level %>%
+  kable("html",
+        col.names = c("SOC 2020", "SOC 2020 occupation title", ">= skill count", "+-5% skill count", "+-10% skill count", "SOC 2020 3-digit group", ">= avg. group skill count", "+-5% avg. group skill count", "+-10% avg. group skill count"),
+        caption = "Industries Skill-Matched to Farmers (5111)",
+        digits = 0,
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = TRUE,
+    position = "center",
+  ) %>%
+  column_spec(6, border_left = "1px solid black") %>%
+  scroll_box(height = "500px")
+
+```
+
+Unsurprisingly the 46 skills required for Farmers (5111) are perfectly matched with Farmers (5111) and other closely farming related (511) industries. Beyond these, this list provides a skill-match ranking between agriculture and a given industry, standing in as a proxy for one of the factors determining the industry's ability to absorb workers displaced by an employment shock to agriculture.
+
+The ranking for the average skills in the 3-digit groups varies between the central, +-5% and +-10% columns suggesting that the industry ranking is sensitive to variations in the exact skill ranking, therefore the alternative rankings can be explored in further analysis.
+
+```{r}
+#| label: prepare-sf
+
+# Convert both columns to character and filter matching occupations
+matched_census_data <- census_sec_emp %>%
+  mutate(C2021_OCC_105 = as.character(C2021_OCC_105)) %>%
+  semi_join(
+    top_10_occ_105_group %>% mutate(C2021_OCC_105 = as.character(C2021_OCC_105)), 
+    by = "C2021_OCC_105"
+  )
+
+# Summarize total OBS_VALUE for matching occupations and overall employment (C2021_OCC_105 = 0)
+top_occ_sum_per_geography <- census_sec_emp %>%
+  mutate(C2021_OCC_105 = as.character(C2021_OCC_105)) %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  summarize(
+    top_occ_obs_value = sum(OBS_VALUE[C2021_OCC_105 %in% top_10_occ_105_group$C2021_OCC_105], na.rm = TRUE),
+    total_obs_value = sum(OBS_VALUE[C2021_OCC_105 == "0"], na.rm = TRUE),
+    agri_obs_value = sum(OBS_VALUE[C2021_OCC_105 == "60"], na.rm = TRUE),
+    top_percentage_value = ifelse(
+      total_obs_value > 0, 
+      (top_occ_obs_value / total_obs_value) * 100, 
+      NA_real_  # Assign NA if total_obs_value is 0
+    ),
+    agri_percentage_value = ifelse(
+      agri_obs_value > 0, 
+      (agri_obs_value / total_obs_value) * 100, 
+      0  # Assign NA if total_obs_value is 0
+    ),
+    agri_top_ratio = ifelse(
+      agri_obs_value > 0, 
+      (agri_obs_value / top_occ_obs_value), 
+      NA_real_  # Assign NA if agri_obs_value is 0
+    ),
+    .groups = "drop"
+  ) %>%
+  filter(substr(GEOGRAPHY_CODE, 1, 1) == "E")
+
+# Merge top_occ_sum_per_geography with MSOA_21_boundary based on GEOGRAPHY_CODE and MSOA21CD
+top_occ_sum_geo_sf <- top_occ_sum_per_geography %>%
+  left_join(MSOA_21_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD")) %>%
+  st_as_sf()
+```
+
+## Overlap in employment between agriculture and skill-matched industries
+
+In the absence of a comprehensive measure that integrates skill-matching with other relevant factors to gauge how easily alternative industries could absorb a shock in a given sector, an interim step is to examine where skill-matched industries are already present in areas with high agricultural employment. By doing so, we gain an early indication of which areas may be most exposed to the impacts of an agricultural shock and how effectively those areas might redeploy displaced workers.
+
+The plot below shows areas divided into three-by-three quantiles where proportional employment is high, medium or low in agriculture and in the top 10 skill-matched industries (excluding agri-related 511 and 911 SOCs). As before, urban areas show a low proportion of agriculture and higher proportion of skill matched employment. Areas with the most exposure based on this indicator to agriculture employment shocks are displayed in red where agriculture is a relatively high proportional source of employment and there is low presence of similar skill industries.
+
+```{r}
+#| label: fig-bivariate-plot
+#| fig-cap: "Figure 3 - Agriculture (SOC 511) vs Top 10 Skill-Matched Industry Employment (%)"
+
+# Classify data for the bivariate map
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  bi_class(
+    x = agri_percentage_value,
+    y = top_percentage_value,
+    style = "quantile",  # or "equal"
+    dim = 3              # 3x3 grid for 9 bivariate color categories
+  )
+
+# Plot the bivariate choropleth map
+bivariate_map <- ggplot(top_occ_sum_geo_sf) +
+  geom_sf(aes(geometry = geometry, fill = bi_class), color = "grey", size = 0.1) +
+  bi_scale_fill(pal = "DkViolet", dim = 3) +  # Choose a color palette
+  labs(
+    title = "Bivariate plot of Agriculture (SOC 511) vs Top 10 Skill-Matched Industry Employment (%)",
+    subtitle = "Skill matched industries exclude similar agricultural industries (SOC 511, 911)",
+    caption = "Source: Census Employment Data, ONS experimental occupational skills data"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(size = 48, hjust = 0.5),
+    plot.subtitle = element_text(size = 44, hjust = 0.5),
+    plot.caption = element_text(size = 34, hjust = 0.5),
+  ) + 
+    guides(fill = "none")
+
+# Add a legend to the map
+bivariate_legend <-
+  bi_legend(
+    pal = "DkViolet",
+    dim = 3,
+    xlab = "Higher Agricultural %",
+    ylab = "Higher S-M Industry %",
+    size = 32  # Adjust legend size
+  ) +
+  theme(
+    plot.background = element_rect(fill = "grey90"),
+    panel.background = element_rect(fill = "grey90"))
+
+# Combine the map and legend using cowplot
+final_plot <- cowplot::plot_grid(
+  bivariate_map, 
+  bivariate_legend, 
+  ncol = 2,         # Place map and legend side by side
+  rel_widths = c(4, 1)  # Adjust the relative widths of the map and legend
+)
+
+# Save the plot
+ggsave("bi_chorop_agri_skill_match_v2.png", device = "png", width = 45, height = 45, dpi = 200)
+
+knitr::include_graphics("bi_chorop_agri_skill_match_v2.png")
+```
+
+Combining this plot with @fig-leading-industry yields @fig-bivariate-rank-plot which shows that out of the 237 MSOAs where agriculture is a top 3 source of employment, there are 77 or around a third of these MSOAs that fall in the lowest third quantile (under 4% of total employment in the MSOA) for combined employment in the 10 skill-matched industries. Likewise, there are 134 MSOAs where agriculture is the leading source of employment and the 10 skill-matched industries constitute under 6.5% of total employment. A part of this may be attributed to agriculture being the most economically suitable (most opportunities, highest wages, etc.) employment industry for workers with this skill-set, keeping the number of workers in the skill-matched industries low. However, this suggests that there are numerous locations where industry diversity for a particular skill-set is relatively low, increasing the exposure to risk from industry specific land-use derived labour market shocks.
+
+```{r}
+#| label: fig-bivariate-rank-plot
+#| fig-cap: "Figure 4 - Agriculture (SOC 511) employment rank vs Top 10 Skill-Matched Industry Employment (%)"
+
+# Bin top_percentage_value into 3 qunatiles
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  mutate(
+    topPerc_class = cut(
+      top_percentage_value,
+      breaks = quantile(top_percentage_value, 
+                        probs = c(0, 1/3, 2/3, 1), 
+                        na.rm = TRUE),
+      include.lowest = TRUE,
+      labels = c(1, 2, 3)
+    )
+  )
+
+# Invert rank for plotting
+top_3_geometry_inverted <- top_3_geometry %>%
+  mutate(agri_rank = 4 - Rank)
+
+# Merge rank data with top_occ_sum_geo_sf
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  left_join(
+    top_3_geometry_inverted %>%
+      st_drop_geometry() %>% 
+      select(GEOGRAPHY_CODE, agri_rank),
+    by = "GEOGRAPHY_CODE"
+  )
+
+# Create a new column for the bivariate label
+top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
+  mutate(
+    agri_rank_class = if_else(is.na(agri_rank), 0, agri_rank),
+    bi_label = paste0(agri_rank_class, "-", topPerc_class)
+  )
+
+# Plot the bivariate choropleth map
+bivariate_map <- ggplot(top_occ_sum_geo_sf) +
+  geom_sf(aes(geometry = geometry, fill = bi_label), color = "grey", size = 0.1) +
+  bi_scale_fill(pal = "PurpleOr", dim = 3) +  # Choose a color palette
+  labs(
+    title = "Agriculture (SOC 511) as top 3 emplyment source vs Top 10 Skill-Matched Industry Employment (%)",
+    subtitle = "Skill matched industries exclude similar agricultural industries (SOC 511, 911)",
+    caption = "Source: Census Employment Data, ONS experimental occupational skills data | *SoE = Source of Employment"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(size = 48, hjust = 0.5),
+    plot.subtitle = element_text(size = 44, hjust = 0.5),
+    plot.caption = element_text(size = 34, hjust = 0.5),
+  ) + 
+    guides(fill = "none")
+
+# Add a legend to the map
+bivariate_legend <-
+  bi_legend(
+    pal = "PurpleOr",
+    dim = 3,
+    xlab = "Agri as top 3, 2, 1 SoE*",
+    ylab = "Higher S-M Industry %",
+    size = 32  # Adjust legend size
+  ) +
+  theme(
+    plot.background = element_rect(fill = "grey90"),
+    panel.background = element_rect(fill = "grey90"))
+
+# Combine the map and legend using cowplot
+final_plot <- cowplot::plot_grid(
+  bivariate_map, 
+  bivariate_legend, 
+  ncol = 2,         # Place map and legend side by side
+  rel_widths = c(4, 1)  # Adjust the relative widths of the map and legend
+)
+
+# Save the plot
+ggsave("bi_chorop_rank.png", device = "png", width = 45, height = 45, dpi = 200)
+
+knitr::include_graphics("bi_chorop_rank.png")
+```
+
+```{r}
+#| label: sm-quantlies-tab
+
+# Check quantiles for the top 10 skill-matched industry percentage
+quantile(top_occ_sum_geo_sf$top_percentage_value, 
+         probs = c(0, 0.3333, 0.6666, 1), na.rm = TRUE) %>%
+  kable("html",
+        col.names = c("Quantile", "(%) of total employment"),
+        caption = "Skill-Matched Industry Employment (%) Quantiles represented in Fig 3 and Fig 4",
+        digits = 2,
+        align = "l"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE,
+    position = "left"
+  )
+```
+
+The MSOAs with the highest indicated risk are also the ones with the largest geographic areas, given that by definition they contain a similar number of people it suggests that areas with a lower population density are more exposed to these type of shocks. They are also the furthest away from major urban centres so even with a relaxation of the commuting assumption the ability of other industries in the area to absorb displaced agricultural workers may be low.
+
+```{r}
+#| label: count-class-rank
+#| include: false
+
+# Check quantiles for the agriculture percentage
+quantile(top_occ_sum_geo_sf$agri_percentage_value, 
+         probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+
+# Check quantiles for the top 10 skill-matched industry percentage
+quantile(top_occ_sum_geo_sf$top_percentage_value, 
+         probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+
+# Join top 3 rank and bivariate classes
+msoa_class_rank <- top_occ_sum_geo_sf %>%
+  left_join(
+    select(st_drop_geometry(top_3_geometry), GEOGRAPHY_CODE, Rank),
+    by = "GEOGRAPHY_CODE"
+  ) %>%
+  st_drop_geometry()
+
+# Group by bi_class (the bivariate classification) and the Rank field
+cnr_count_table <- msoa_class_rank %>%
+  group_by(bi_class, Rank) %>%
+  summarise(
+    n_MSOAs = n(),    # count how many MSOAs
+    .groups = "drop"
+  )
+
+# Print table
+print(cnr_count_table)
+```
+
+## Conclusion and potential for future analysis
+
+This initial analysis provides an indication of the magnitude and geographic distribution of a specific vulnerability in local labour markets, highlighting the MSOAs in the South West, near the Welsh border and the North which should be considered for further study.
+
+The sources of data and methodologies in this initial analysis identified can be built upon to cover other primary industries besides one agriculture industry and extended with other data like projected growth and commuting potential to consider other factors determining the suitability of industries in absorbing workers from other industries. Doing so would add additional dimensions to the analysis making interpretation difficult, as such it would likely benefit from assessing the suitability factors separately and then combining them into a single weighted index. This way the interpretation of the subjective importance of each factor can be determined at the point of use of this analysis, either when targetting future research or when assessing specific policy impacts.
+
+More sophisticated methodology utilising Input-Output tables can also be used to determine second-order spillovers from an hypothetical industry specific shock (e.g., shock in agriculture employment propagating to meat packing to logistics).
