@@ -445,12 +445,12 @@ compare_all_skills <- function(data, reference_soc_code) {
       rank_within_5_percent = rank(-within_5_percent_skill_count, ties.method = "min"),
       rank_within_10_percent = rank(-within_10_percent_skill_count, ties.method = "min"),
       # Create the 3-digit SOC code by removing the last digit of the SOC 2020 code
-      `3 digit SOC 2020 code` = substr(as.character(`SOC 2020 code`), 1, 3)
+      `3 digit SOC 2020` = substr(as.character(`SOC 2020 code`), 1, 3)
     )
   
   # Calculate the average skill counts for each 3-digit SOC code
   result <- result %>%
-    group_by(`3 digit SOC 2020 code`) %>%
+    group_by(`3 digit SOC 2020`) %>%
     mutate(
       avg_equal_or_lower_skill_count = mean(equal_or_lower_skill_count, na.rm = TRUE),
       avg_within_5_percent_skill_count = mean(within_5_percent_skill_count, na.rm = TRUE),
@@ -468,22 +468,23 @@ farmers_skill_level <- compare_all_skills(ons_occ_skills, 5111)
 
 Identify the top 10 highest average skill compatible occupation (3-digit) groups
 ```{r}
-# Sort the result by avg_equal_or_lower_skill_count in descending order and select the top 10 excluding the first entry (first entry will likely be the same SOC as target)
+# Sort the result by avg_equal_or_lower_skill_count in descending order and select the top 10, excluding other agricultural SOCs
 top_10_soc_group <- compare_all_skills(ons_occ_skills, 5111) %>%
   arrange(desc(avg_equal_or_lower_skill_count)) %>%
-  select(`3 digit SOC 2020 code`, avg_equal_or_lower_skill_count) %>%
-  distinct(`3 digit SOC 2020 code`, .keep_all = TRUE) %>%
-  filter(!`3 digit SOC 2020 code` %in% c("511", "911")) # Filter out other Agri codes
+  filter(!`3 digit SOC 2020` %in% c("511", "911")) %>% # Filter out other Agri codes
+  distinct(`3 digit SOC 2020`, .keep_all = TRUE) %>%
+  slice_head(n = 10) %>%
+  select(`3 digit SOC 2020`, avg_equal_or_lower_skill_count)
 
-# Extract the first 3 characters of C2021_OCC_105_NAME to match with `3 digit SOC 2020 code`
+# Extract the first 3 characters of C2021_OCC_105_NAME to match with `3 digit SOC 2020`
 census_sec_emp_selected <- census_sec_emp %>%
-  mutate(`3 digit SOC 2020 code` = substr(C2021_OCC_105_NAME, 1, 3)) %>%
-  select(`3 digit SOC 2020 code`, C2021_OCC_105) %>%
-  distinct(`3 digit SOC 2020 code`, .keep_all = TRUE) # only keep unique values
+  mutate(`3 digit SOC 2020` = substr(C2021_OCC_105_NAME, 1, 3)) %>%
+  select(`3 digit SOC 2020`, C2021_OCC_105) %>%
+  distinct(`3 digit SOC 2020`, .keep_all = TRUE) # only keep unique values
 
 # Merge the `top_10` list with the selected `C2021_OCC_105` column
-top_10_occ_105_group <- top_10_excluding_top_1 %>%
-  left_join(census_sec_emp_selected, by = "3 digit SOC 2020 code")
+top_10_occ_105_group <- top_10_soc_group %>%
+  left_join(census_sec_emp_selected, by = "3 digit SOC 2020")
 
 # Print the matched results
 print(top_10_occ_105_group)
@@ -528,7 +529,7 @@ top_occ_sum_per_geography <- census_sec_emp %>%
 
 # Merge top_occ_sum_per_geography with MSOA_21_boundary based on GEOGRAPHY_CODE and MSOA21CD
 top_occ_sum_geo_sf <- top_occ_sum_per_geography %>%
-  left_join(filtered_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD")) %>%
+  left_join(MSOA_21_boundary, by = c("GEOGRAPHY_CODE" = "MSOA21CD")) %>%
   st_as_sf()
 
 # Plot the top 10 skill-matching industry total employment by MSOA
@@ -606,7 +607,7 @@ top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
   bi_class(
     x = agri_percentage_value,
     y = top_percentage_value,
-    style = "quantile",  # or "equal" depending on your needs
+    style = "quantile",  # or "equal"
     dim = 3              # 3x3 grid for 9 bivariate color categories
   )
 
@@ -615,9 +616,9 @@ bivariate_map <- ggplot(top_occ_sum_geo_sf) +
   geom_sf(aes(geometry = geometry, fill = bi_class), color = "grey", size = 0.1) +
   bi_scale_fill(pal = "DkViolet", dim = 3) +  # Choose a color palette
   labs(
-    title = "Bivariate plot of Agriculture vs Top 10 Skill-Matched Industry Employment (%)",
-    subtitle = "Comparison of Agricultural and Top 10 Occupation Percentages by MSOA",
-    caption = "Source: Census Employment Data"
+    title = "Bivariate plot of Agriculture (SOC 511) vs Top 10 Skill-Matched Industry Employment (%)",
+    subtitle = "Skill matched industries exclude similar agricultural industries (SOC 511, 911)",
+    caption = "Source: Census Employment Data, ONS experimental occupational skills data"
   ) +
   theme_minimal() +
   theme(
@@ -637,7 +638,7 @@ bivariate_legend <-
     pal = "DkViolet",
     dim = 3,
     xlab = "Higher Agricultural %",
-    ylab = "Higher Top Industry %",
+    ylab = "Higher S-M Industry %",
     size = 32  # Adjust legend size
   ) +
   theme(
@@ -653,7 +654,7 @@ final_plot <- cowplot::plot_grid(
 )
 
 # Save the plot
-ggsave("bi_chorop_agri_skill_match.png", device = "png", width = 45, height = 45, dpi = 200)
+ggsave("bi_chorop_agri_skill_match_v2.png", device = "png", width = 45, height = 45, dpi = 200)
 
 ```
 Generate an interactive bivariate Agri (511) and top 10 skill-matched occ group leaflet plot  

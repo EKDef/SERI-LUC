@@ -1,6 +1,8 @@
 ---
 title: "SERI-LUC PoC spatial skill analysis"
-format: html
+format: 
+  html:
+    self-contained: true
 editor: visual
 echo: false
 warning: false
@@ -9,7 +11,7 @@ message: false
 
 ## Introduction
 
-The aim of this analysis is to investigate the resilience of local labour markets to external (land use change derived) shocks and to act as a proof of concept for further work by identifying available data and methodologies. This document will focus on agriculture (specifically SOC 511 and 911) as the primary industry receiving the shocks to serve as an example due to its relative prominence in rural areas. However, the analysis framework is flexible and can be applied to any industry measured in Census 2021 data. Subsequent analysis is done at MSOA level as is avoids disclosure issues for public datasets present at smaller levels while still maintaining sufficient spatial resolution to draw out local patterns.
+The aim of this analysis is to investigate the resilience of local labour markets to external land-use change derived shocks and to act as a proof of concept for further work by identifying available data and methodologies. This document will focus on agriculture (specifically SOC 511 and 911) as the primary industry receiving the shocks to serve as an illustrative example and was chosen due to its relative prominence in rural areas. However, the analysis framework is flexible and can be applied to any industry measured in Census 2021 data. The following analysis is done at MSOA level as it maximises data availability by avoiding disclosure issues for public datasets present at smaller levels, while still maintaining sufficient spatial resolution to draw out local patterns.
 
 ```{r}
 #| label: load packages
@@ -102,7 +104,7 @@ ggsave("agri_percentage_census_v2.png", device = "png", width = 45, height = 45,
 knitr::include_graphics("agri_percentage_census_v2.png")
 ```
 
-First, we investigate the local prevalence of agriculture in the local labour market by ploting the proportion that Agriculture and Related trades (511) makes up of total employment. The figure above shows somewhat intuitive patters where rural areas have higher agriculture proportional employment and urban areas have low. It is also unclear from the relatively low maximum proportion of \~12.5% across all MSOAs if agriculture is a pivotal industry where a significant shock (e.g., 15% decline in employment) would lead to significant socio-economic impacts. However, clustering between MSOAs is also apparent especially in the South West, near the Welsh border and the North which combined with second-order industry spillovers could cumulatively add to greater impacts.
+First, the local prevalence of agriculture in the local labour market is examined by plotting the proportion that Agriculture and Related trades (511) makes up of total employment. @fig-agri-plot shows mostly intuitive patterns where rural areas have higher agriculture proportional employment and urban areas have low. It is also unclear from the relatively low maximum proportion of \~12.5% across all MSOAs if agriculture is a pivotal industry where a significant shock (e.g., 15% decline in employment) would lead to significant socio-economic impacts. However, clustering between MSOAs is also apparent especially in the South West, near the Welsh border and the North which combined with second-order industry spillovers which are not yet analysed could cumulatively add to greater impacts.
 
 ## Agriculture as leading employment industry
 
@@ -173,7 +175,7 @@ knitr::include_graphics("top3_employ_census_v2.png")
 
 ```
 
-Plotting the MSOAs where agriculture is in the top 3 proportional sources of employment indicates that the areas with high proportional employment in agriculture also tend to have agriculture as the leading source of employment. This suggests that even without employing the majority of the workers in a given area, labour markets may still be sensitive to shocks in agriculture employment as it is the largest source of employment across a wide clustered geographic area. This leads to the question of how well are these locations able to absorb shocks to the major sources of employment which is explored in the next section.
+Plotting the MSOAs where agriculture is in the top 3 proportional sources of employment indicates that the areas with high proportional employment in agriculture also tend to have agriculture as the leading source of employment. This suggests that even without employing the overall majority of the workers in a given area, labour markets may still be sensitive to shocks in agriculture employment as it is the largest source of employment across a wide clustered geographic area. This leads to the question of how well are these locations able to absorb shocks to the major sources of employment which is explored in the next section.
 
 ```{r}
 #| label: skill-comp-function
@@ -242,9 +244,9 @@ top_10_occ_105_group <- top_10_soc_group %>%
 
 ## Skill-Matching between industries
 
-ONS experimental skill data analysing the required skills (covering 132 different ratings from Systems Analysis to Arm-Hand Steadiness) for workers in a given industry provides a more objective platform to evaluate the ability of a given worker to transfer to another industry in the short-run. This is based on the assumption that in the long and medium-run new labour market entrants would be trained to meet the needs of the post-shock equilibrium, meanwhile in the short-run the ability to retrain is time limited and as such will be restricting workers to industries close to their existing skill-set. A similar assumption is applied to geographic mobility where in the short-run, geographic labour movement is limited to within the MSOA.
+ONS experimental skill data assessing the required skills (covering 132 different ratings from Systems Analysis to Arm-Hand Steadiness) for workers in a given industry provides a more objective platform to evaluate the ability of a given worker to transfer to another industry in the short-run. This is based on the assumption that in the long and medium-run, new labour market entrants would be trained to meet the needs of the post-shock equilibrium, meanwhile in the short-run the ability to retrain is time limited and as such will be restricting workers to industries close to their existing skill-set. A similar assumption is applied to geographic mobility where in the short-run, geographic labour movement is assumed to be limited to within the MSOA.
 
-To identify industries that an agriculture worker would be able to transfer to with minimal retraining, the skills required are compared to all other industries. The instances where skills required for a worker in agriculture are higher than those in another industry are counted and displayed in the table below (+-5% and +-10% worker skill ratings are also calculated for sensitivity tests). Since the skill data is provided for 4-digit SOC codes and employment data is available at 3-digit SOC codes, the average skill count for a 3-digit group are calculated and used going forward.
+To identify industries that an agriculture worker would be able to transfer to with minimal retraining, the skills required for their occupation are compared to all other industries. The instances where skills required for a worker in agriculture are higher than those in another industry are counted and displayed in the table below (+-5% and +-10% worker skill ratings are also calculated for sensitivity tests). Since the skill data is provided for 4-digit SOC codes and census employment data is available at 3-digit SOC codes, the average skill counts for a 3-digit group are calculated and used going forward.
 
 ```{r}
 #| label: skill-matched table
@@ -270,9 +272,9 @@ farmers_skill_level %>%
 
 ```
 
-Unsurprisingly the 46 skills required for Farmers (5111) are perfectly matched with Farmers (5111) and other closely farming related (511) industries. Beyond these, this list provides a skill-match ranking between agriculture and a given industry, standing in as a proxy for one of the factors determining the industry's ability to absorb workers displaced by an employment shock to agriculture.
+Unsurprisingly, the 46 skills required for Farmers (5111) are perfectly matched with Farmers (5111) and other closely farming related (511) industries. Beyond these, this list provides a skill-match ranking between agriculture and a given industry, standing in as a proxy for one of the factors determining the industry's ability to absorb workers displaced by an employment shock to agriculture.
 
-The ranking for the average skills in the 3-digit groups varies between the central, +-5% and +-10% columns suggesting that the industry ranking is sensitive to variations in the exact skill ranking, therefore the alternative rankings can be explored in further analysis.
+The ranking for the average skills in the 3-digit groups varies between the central, +-5% and +-10% columns suggesting that the industry ranking is sensitive to variations in the exact skill ranking, therefore the alternative rankings should be explored in further analysis.
 
 ```{r}
 #| label: prepare-sf
@@ -322,7 +324,7 @@ top_occ_sum_geo_sf <- top_occ_sum_per_geography %>%
 
 In the absence of a comprehensive measure that integrates skill-matching with other relevant factors to gauge how easily alternative industries could absorb a shock in a given sector, an interim step is to examine where skill-matched industries are already present in areas with high agricultural employment. By doing so, we gain an early indication of which areas may be most exposed to the impacts of an agricultural shock and how effectively those areas might redeploy displaced workers.
 
-The plot below shows areas divided into three-by-three quantiles where proportional employment is high, medium or low in agriculture and in the top 10 skill-matched industries (excluding agri-related 511 and 911 SOCs). As before, urban areas show a low proportion of agriculture and higher proportion of skill matched employment. Areas with the most exposure based on this indicator to agriculture employment shocks are displayed in red where agriculture is a relatively high proportional source of employment and there is low presence of similar skill industries.
+The plot below shows areas divided into three-by-three quantiles where proportional employment is high, medium or low in agriculture and in the top 10 skill-matched industries (cutoff of 10 was chosen arbitrarily, excluding agri-related 511 and 911 SOCs). As before, urban areas show a low proportion of agriculture and higher proportion of skill matched employment. Areas with the most exposure based on this indicator are displayed in red where agriculture is a relatively high proportional source of employment and there is low presence of similar skill requiring industries.
 
 ```{r}
 #| label: fig-bivariate-plot
@@ -385,7 +387,7 @@ ggsave("bi_chorop_agri_skill_match_v2.png", device = "png", width = 45, height =
 knitr::include_graphics("bi_chorop_agri_skill_match_v2.png")
 ```
 
-Combining this plot with @fig-leading-industry yields @fig-bivariate-rank-plot which shows that out of the 237 MSOAs where agriculture is a top 3 source of employment, there are 77 or around a third of these MSOAs that fall in the lowest third quantile (under 4% of total employment in the MSOA) for combined employment in the 10 skill-matched industries. Likewise, there are 134 MSOAs where agriculture is the leading source of employment and the 10 skill-matched industries constitute under 6.5% of total employment. A part of this may be attributed to agriculture being the most economically suitable (most opportunities, highest wages, etc.) employment industry for workers with this skill-set, keeping the number of workers in the skill-matched industries low. However, this suggests that there are numerous locations where industry diversity for a particular skill-set is relatively low, increasing the exposure to risk from industry specific land-use derived labour market shocks.
+Combining this plot with @fig-leading-industry yields @fig-bivariate-rank-plot which shows that out of the 237 MSOAs where agriculture is a top 3 source of employment, there are 77 or around a third of these MSOAs that fall in the lowest third quantile (under 4% of total employment in the MSOA) for combined employment in the 10 skill-matched industries. Likewise, there are 134 MSOAs where agriculture is the leading source of employment and the 10 skill-matched industries constitute under 6.5% of total employment. A part of this may be attributed to agriculture being the most economically suitable (most opportunities, highest wages, etc.) employment industry for workers with this skill-set, keeping the number of workers in the skill-matched industries low. However, this suggests that there are numerous locations where industry diversity for a particular skill-set is relatively low, increasing the exposure to risk from industry specific land-use change derived labour market shocks.
 
 ```{r}
 #| label: fig-bivariate-rank-plot
@@ -491,7 +493,7 @@ quantile(top_occ_sum_geo_sf$top_percentage_value,
   )
 ```
 
-The MSOAs with the highest indicated risk are also the ones with the largest geographic areas, given that by definition they contain a similar number of people it suggests that areas with a lower population density are more exposed to these type of shocks. They are also the furthest away from major urban centres so even with a relaxation of the commuting assumption the ability of other industries in the area to absorb displaced agricultural workers may be low.
+The MSOAs with the highest indicated risk are also the ones with the largest geographic areas, given that by definition they contain a similar number of people it suggests that areas with a lower population density are more exposed to these types of shocks. They are also the furthest away from major urban centres so even with a relaxation of the commuting assumption the ability of other industries in the area to absorb displaced agricultural workers may be low.
 
 ```{r}
 #| label: count-class-rank
@@ -529,6 +531,6 @@ print(cnr_count_table)
 
 This initial analysis provides an indication of the magnitude and geographic distribution of a specific vulnerability in local labour markets, highlighting the MSOAs in the South West, near the Welsh border and the North which should be considered for further study.
 
-The sources of data and methodologies in this initial analysis identified can be built upon to cover other primary industries besides one agriculture industry and extended with other data like projected growth and commuting potential to consider other factors determining the suitability of industries in absorbing workers from other industries. Doing so would add additional dimensions to the analysis making interpretation difficult, as such it would likely benefit from assessing the suitability factors separately and then combining them into a single weighted index. This way the interpretation of the subjective importance of each factor can be determined at the point of use of this analysis, either when targetting future research or when assessing specific policy impacts.
+The sources of data and methodologies in this initial analysis identified can be built upon to cover other primary industries besides one agriculture industry and extended with other data like projected growth and commuting potential to consider other factors determining the suitability of industries in absorbing workers from other industries. Doing so would add additional dimensions to the analysis making interpretation difficult, as such it would likely benefit from assessing the suitability factors separately and then combining them into a single weighted index. This way the interpretation of the subjective importance of each factor can be determined at the point of use of this analysis, either when targeting future research or when assessing specific policy impacts.
 
-More sophisticated methodology utilising Input-Output tables can also be used to determine second-order spillovers from an hypothetical industry specific shock (e.g., shock in agriculture employment propagating to meat packing to logistics).
+More sophisticated methodology utilising Input-Output tables can also be used to determine second-order spillovers from a hypothetical industry specific shock (e.g., shock in agriculture employment propagating to meat packing to logistics).
