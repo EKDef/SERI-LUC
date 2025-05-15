@@ -1,0 +1,8 @@
+streamlit
+pandas
+geopandas
+pydeck
+shapely
+pyarrow
+geoparquet
+streamlit-aggrid>=1.1.3
