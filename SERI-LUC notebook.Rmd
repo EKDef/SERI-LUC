@@ -5,6 +5,7 @@ date: "2024-12-10"
 ---
 
 Load Packages
+
 ```{r Load packages, include=FALSE}
 library(sf)
 library(tidyverse)
@@ -17,14 +18,21 @@ library(cowplot)
 ```
 
 Load Data
+
 ```{r Load data, include=FALSE}
 # Load 2021 MSOA boundary file and filter for England only
 MSOA_21_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_ons_open_geography_portal/dataset_middle_s_o_a_2021_ew_bfe/format_SHP_middle_s_o_a_2021_ew_bfe/LATEST_middle_s_o_a_2021_ew_bfe/MSOA_2021_EW_BFC_V7.shp") %>%
-  filter(substr(MSOA21CD, 1, 1) == "E")
+  filter(substr(MSOA21CD, 1, 1) == "E") %>%
+  select(-MSOA21NMW, -BNG_E, -BNG_N, -LAT, -LONG, -GlobalID)
 
 # Load 2011 MSOA boundary file and filter for England only
 MSOA_11_boundary <- st_read("/dbfs/mnt/lab/unrestricted/elmantas.kamaitis@defra.gov.uk/Middle_layer_Super_Output_Areas_Dec_2011_Boundaries_Full_Clipped_BFC_EW_V3_2022_942885142986844588.gpkg") %>%
   filter(substr(MSOA11CD, 1, 1) == "E")
+
+# Load NCA boundary file
+NCA_boundary <- st_read("/dbfs/mnt/base/unrestricted/source_defra_data_services_platform/dataset_national_character_areas/format_SHP_national_character_areas/LATEST_national_character_areas/National_Character_Areas___Natural_England.shp") %>%
+  select(-jcacode, -jcaname, -naid, -area_sqkm, -hotlink, -shape_leng, 
+         -shape_le_1, -alt, -blt, -st_area_sh, -st_perimet)
 
 # Load Business Register and Employment Survey data on the number of workers per 4-digit 2007 SIC industry working in each 2011 MSOA
 bres_sec_emp <- nomis_get_data(
@@ -51,10 +59,14 @@ temp_file <- tempfile(fileext = ".xlsx")
 download.file("https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/labourproductivity/datasets/skillssupplyestimates2012to2023/august2024/skillssupply2012to2023.xlsx", temp_file, mode = "wb") # onsr does not have this dataset available, so loading it from link instead
 
 ons_occ_skills <- read_excel(temp_file, sheet = 4, skip = 4)
+
+
 ```
-##### BRES based analysis #####
+
+##### BRES based analysis
 
 Summing by industry and merging with MSOA boundaries
+
 ```{r}
 # Summing OBS_VALUE for each unique GEOGRAPHY
 summed_df <- bres_sec_emp %>%
@@ -79,7 +91,9 @@ final_df <- final_df %>%
 merged_data <- left_join(MSOA_11_boundary, final_df, by = c("MSOA11CD" = "GEOGRAPHY_CODE"))
 
 ```
+
 Summary Stats
+
 ```{r}
 
 summary(merged_data$AGRI_PERCENTAGE)
@@ -118,7 +132,9 @@ bin_counts <- merged_data %>%
 print(bin_counts)
 
 ```
+
 Map plots for percentage and total agri employment
+
 ```{r}
 
 ##### Total employment plot #####
@@ -231,9 +247,10 @@ ggsave("agri_01pct_total_MSOA.png", device = "png", width = 45, height = 45, dpi
 
 ```
 
-##### Census based analysis #####
+##### Census based analysis
 
 Plot proportion Agri (511) of total employment
+
 ```{r}
 # Filter and summarize census data for the required categories
 filtered_census_data <- census_sec_emp %>%
@@ -280,6 +297,7 @@ ggsave("agri_percentage_census.png", device = "png", width = 45, height = 45, dp
 ```
 
 Estimate the leading employment industries in each MSOA
+
 ```{r}
 
 # Estimate the proportion of total employment for each industry in the census data
@@ -348,6 +366,7 @@ print(top_3_employ_counts)
 ```
 
 Plot the MSOAs where agri (511) is the leading employment industry
+
 ```{r}
 # Merge top_3_values with MSOA_21_boundary to include geometry
 top_3_with_geometry <- top_3_values %>%
@@ -411,6 +430,7 @@ ggsave("top3_employ_census.png", device = "png", width = 45, height = 45, dpi = 
 ```
 
 Skill matching for Agri (511) industry
+
 ```{r}
 # Function to compare skills for all occupations against a given SOC 2020 code
 compare_all_skills <- function(data, reference_soc_code) {
@@ -467,6 +487,7 @@ farmers_skill_level <- compare_all_skills(ons_occ_skills, 5111)
 ```
 
 Identify the top 10 highest average skill compatible occupation (3-digit) groups
+
 ```{r}
 # Sort the result by avg_equal_or_lower_skill_count in descending order and select the top 10, excluding other agricultural SOCs
 top_10_soc_group <- compare_all_skills(ons_occ_skills, 5111) %>%
@@ -491,6 +512,7 @@ print(top_10_occ_105_group)
 ```
 
 Plot the total employment in the top 10 skill-matching occ groups
+
 ```{r}
 # Convert both columns to character and filter matching occupations
 matched_census_data <- census_sec_emp %>%
@@ -601,6 +623,7 @@ ggsave("skill_match_ratio.png", device = "png", width = 45, height = 45, dpi = 2
 ```
 
 Agri (511) and top 10 skill-matched occ group Bivariate plot
+
 ```{r}
 # Classify data for the bivariate map
 top_occ_sum_geo_sf <- top_occ_sum_geo_sf %>%
@@ -657,7 +680,9 @@ final_plot <- cowplot::plot_grid(
 ggsave("bi_chorop_agri_skill_match_v2.png", device = "png", width = 45, height = 45, dpi = 200)
 
 ```
-Generate an interactive bivariate Agri (511) and top 10 skill-matched occ group leaflet plot  
+
+Generate an interactive bivariate Agri (511) and top 10 skill-matched occ group leaflet plot
+
 ```{r}
 
 # Ensure geometry is valid and CRS is correct
@@ -710,3 +735,265 @@ htmlwidgets::saveWidget(map, "interactive_map.html")
 browseURL("interactive_map.html")
 ```
 
+```{r}
+
+# 1.1 Define NCAs of Interest
+nca_list_of_interest <- c(
+  "The Culm", 
+  "South Norfolk and High Suffolk Claylands", 
+  "North Pennines",
+  "Bowland Fells",
+  "South Coast Plain",
+  "Herefordshire Lowlands",
+  "Yorkshire Dales",
+  "Southern Pennines",
+  "Dark Peak",
+  "Central Lincolnshire Vale",
+  "Mid Somerset Hills",
+  "Kesteven Uplands",
+  "High Leicestershire",
+  "Vale of Mowbray",
+  "South East Northumberland",
+  "Coastal Plain"
+)
+
+# 1.2 Filter NCA boundaries for list of interest
+NCA_LoI <- NCA_boundary %>%
+  filter(nca_name %in% nca_list_of_interest)  # Adjust column name as needed
+
+
+# 2.1 Ensure consistent CRS for spatial operations
+MSOA_21_boundary <- st_transform(MSOA_21_boundary, st_crs(NCA_boundary))
+
+# 2.2 Perform spatial intersection to identify MSOAs within NCAs
+msoa_nca_intersection <- st_intersection(MSOA_21_boundary, NCA_LoI)
+
+# 2.3 Calculate intersection type (fully vs partially within)
+msoa_nca_analysis <- msoa_nca_intersection %>%
+  mutate(
+    # Calculate area of intersection
+    intersection_area = st_area(.),
+    # Get original MSOA area (need to rejoin with original boundaries)
+  ) %>%
+  left_join(
+    MSOA_21_boundary %>% 
+      mutate(original_area = st_area(.)) %>%
+      st_drop_geometry() %>%
+      select(-MSOA21NM),
+    by = "MSOA21CD"
+  ) %>%
+  mutate(
+    # Calculate percentage of MSOA within NCA
+    overlap_percentage = as.numeric(intersection_area / original_area) * 100,
+    # Classify as fully or partially within
+    overlap_type = case_when(
+      overlap_percentage >= 95 ~ "Fully Within",
+      overlap_percentage >= 10 ~ "Partially Within",
+      TRUE ~ "Minimal Overlap"
+    )
+  ) %>%
+  filter(overlap_percentage >= 10)  # Keep only meaningful overlaps
+
+
+# 3.1 Define the 3 agricultural SOCs of interest
+agricultural_socs <- c("8", "60", "96")
+# SOC 8 = 121 : Managers and Proprietors in Agriculture Related Services
+# SOC 60 = 511 : Agricultural and Related Trades
+# SOC 96 = 911 : Elementary Agricultural Occupations  
+
+# 3.2 Calculate agricultural employment by SOC for MSOAs in NCAs
+agri_employment_analysis <- census_sec_emp %>%
+  filter(
+    GEOGRAPHY_CODE %in% msoa_nca_analysis$MSOA21CD,
+    C2021_OCC_105 %in% c("0", agricultural_socs)
+  ) %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  summarise(
+    total_employment = sum(OBS_VALUE[C2021_OCC_105 == "0"], na.rm = TRUE),
+    agri_soc_121 = sum(OBS_VALUE[C2021_OCC_105 == "8"], na.rm = TRUE),
+    agri_soc_511 = sum(OBS_VALUE[C2021_OCC_105 == "60"], na.rm = TRUE),
+    agri_soc_911 = sum(OBS_VALUE[C2021_OCC_105 == "96"], na.rm = TRUE),
+    total_agri_employment = agri_soc_121 + agri_soc_511 + agri_soc_911,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    agri_percentage_121 = (agri_soc_121 / total_employment) * 100,
+    agri_percentage_511 = (agri_soc_511 / total_employment) * 100,
+    agri_percentage_911 = (agri_soc_911 / total_employment) * 100,
+    total_agri_percentage = (total_agri_employment / total_employment) * 100
+  )
+
+# 4.1 Apply existing skill-matching methodology to NCA MSOAs
+skill_matched_employment_nca <- top_occ_sum_per_geography %>%
+  filter(GEOGRAPHY_CODE %in% msoa_nca_analysis$MSOA21CD) %>%
+  select(
+    GEOGRAPHY_CODE, 
+    skill_matched_employment = top_occ_obs_value,
+    skill_matched_percentage = top_percentage_value
+  )
+
+
+```
+
+```{r}
+
+# 5.1 Calculate leading  occupations
+leading_occupations <- census_sec_emp %>%
+  filter(
+    GEOGRAPHY_CODE %in% msoa_nca_analysis$MSOA21CD,
+    C2021_OCC_105 != "0",  # Exclude total
+  ) %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  arrange(desc(OBS_VALUE)) %>%
+  slice_head(n = 5) %>%  # Top 5 occupations
+  mutate(rank = row_number()) %>%
+  select(GEOGRAPHY_CODE, rank, C2021_OCC_105_NAME, OBS_VALUE) %>%
+  pivot_wider(
+    names_from = rank,
+    values_from = c(C2021_OCC_105_NAME, OBS_VALUE),
+    names_prefix = "top_"
+  )
+
+# 5.2 Calculate occupation diversity metrics
+occupation_diversity <- census_sec_emp %>%
+  filter(
+    GEOGRAPHY_CODE %in% msoa_nca_analysis$MSOA21CD,
+    C2021_OCC_105 != "0" # Exclude total employment
+  ) %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  mutate(
+    total_emp = sum(OBS_VALUE, na.rm = TRUE),
+    proportion = OBS_VALUE / total_emp
+  ) %>%
+  summarise(
+    # Shannon Diversity Index
+    shannon_diversity = -sum(proportion * log(proportion), na.rm = TRUE),
+    # Simpson Diversity Index
+    simpson_diversity = 1 - sum(proportion^2, na.rm = TRUE),
+    # Number of occupation categories with >1% employment
+    significant_occupations = sum(proportion > 0.01, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+occupation_diversity_improved <- census_sec_emp %>%
+  filter(
+    GEOGRAPHY_CODE %in% msoa_nca_analysis$MSOA21CD,
+    C2021_OCC_105 != "0"
+  ) %>%
+  group_by(GEOGRAPHY_CODE) %>%
+  mutate(
+    total_emp = sum(OBS_VALUE, na.rm = TRUE),
+    proportion = OBS_VALUE / total_emp
+  ) %>%
+  summarise(
+    # Traditional diversity indices (will still be high)
+    shannon_diversity = -sum(proportion * log(proportion), na.rm = TRUE),
+    simpson_diversity = 1 - sum(proportion^2, na.rm = TRUE),
+    
+    # METRICS FOR CONCENTRATION:
+    
+    # 1. Effective Number of Occupations (inverse of Simpson)
+    effective_occupations = 1 / sum(proportion^2),
+    
+    # 2. Top N concentration ratios
+    top_1_concentration = max(proportion) * 100,
+    top_3_concentration = sum(head(sort(proportion, decreasing = TRUE), 3)) * 100,
+    top_5_concentration = sum(head(sort(proportion, decreasing = TRUE), 5)) * 100,
+    
+    # 3. Herfindahl-Hirschman Index (0-10000 scale, higher = more concentrated)
+    hhi = sum(proportion^2) * 10000,
+    
+    # 5. Number of significant occupations (>1%, >2%, >5%)
+    occupations_over_1pct = sum(proportion > 0.01),
+    occupations_over_2pct = sum(proportion > 0.02),
+    occupations_over_5pct = sum(proportion > 0.05),
+    
+    # 6. Dominance ratio (largest / second largest) - FIXED VERSION
+    dominance_ratio = {
+      sorted_vals <- sort(proportion, decreasing = TRUE)
+      if(length(sorted_vals) >= 2) {
+        sorted_vals[1] / sorted_vals[2]
+      } else {
+        NA_real_
+      }
+    },
+    
+    .groups = "drop"
+  ) %>%
+  # 4. Concentration ratio categories - moved outside summarise() to avoid vectorization
+  mutate(
+    concentration_category = case_when(
+      top_1_concentration >= 10 ~ "Highly Concentrated (10%+ in 1 occupation)",
+      top_3_concentration >= 20 ~ "Concentrated (20%+ in top 3)",
+      top_5_concentration >= 30 ~ "Moderately Concentrated (30%+ in top 5)",
+      TRUE ~ "Diverse"
+    )
+  )
+
+```
+
+```{r}
+
+# 6.1 Create comprehensive results table
+final_results <- msoa_nca_analysis %>%
+  st_drop_geometry() %>%
+  select(MSOA21CD, MSOA21NM, nca_name, overlap_percentage, overlap_type) %>%
+  left_join(agri_employment_analysis, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  left_join(skill_matched_employment_nca, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  left_join(leading_occupations, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  left_join(occupation_diversity_improved, by = c("MSOA21CD" = "GEOGRAPHY_CODE")) %>%
+  arrange(nca_name, overlap_type, desc(total_agri_percentage))
+
+# 6.2 Export to CSV
+write_csv(final_results, "nca_msoa_agricultural_employment_analysis.csv")
+
+# 6.3 Create summary by NCA
+nca_summary <- final_results %>%
+  group_by(nca_name) %>%
+  summarise(
+    total_msoas = n(),
+    fully_within_count = sum(overlap_type == "Fully Within"),
+    partially_within_count = sum(overlap_type == "Partially Within"),
+    avg_agri_percentage = mean(total_agri_percentage, na.rm = TRUE),
+    avg_skill_matched_percentage = mean(skill_matched_percentage, na.rm = TRUE),
+    avg_diversity = mean(top_3_concentration, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+write_csv(nca_summary, "nca_summary_statistics.csv")
+```
+
+```{r}
+
+# Map showing MSOAs within NCAs colored by overlap type
+ggplot() +
+  geom_sf(data = NCA_boundary, fill = "transparent", color = "grey", linewidth = 1) +
+  geom_sf(data = msoa_nca_analysis, aes(fill = overlap_type), alpha = 0.7) +
+  geom_sf(data = NCA_LoI, fill = "transparent", color = "red", linewidth = 1.2) +
+  scale_fill_manual(values = c("Fully Within" = "darkgreen", 
+                              "Partially Within" = "orange")) +
+  theme_minimal() +
+  labs(title = "MSOAs within Selected NCAs") +
+  theme(
+    panel.grid.major = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(size = 48, hjust = 0.5),
+    plot.subtitle = element_text(size = 44, hjust = 0.5),
+    plot.caption = element_text(size = 24, hjust = 0.5)
+    )
+
+# Save the plot
+ggsave("NCA_MSOA_overlap.png", device = "png", width = 25, height = 25, dpi = 200)
+```
+
+```{r}
+
+# 7.2 Agricultural employment distribution
+ggplot(final_results, aes(x = total_agri_percentage)) +
+  geom_histogram(binwidth = 1, alpha = 0.7) +
+  facet_wrap(~nca_name) +
+  labs(title = "Distribution of Agricultural Employment % by NCA")
+```
